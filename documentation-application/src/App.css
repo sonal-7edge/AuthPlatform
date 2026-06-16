@@ -1,0 +1,10 @@
+.docs {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.docs h1 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
