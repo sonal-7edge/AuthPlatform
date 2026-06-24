@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import AuthCard from '../../../components/AuthCard'
-import FormField from '../../../components/FormField'
+import PasswordField from '../../../components/PasswordField'
 import Button from '../../../components/Button'
 import { ResetPasswordAction } from '../AuthSlice'
 
@@ -25,11 +25,7 @@ export default function ResetPassword() {
     const errors = validate()
     if (Object.keys(errors).length) { setFieldErrors(errors); return }
     setFieldErrors({})
-    dispatch(ResetPasswordAction({
-      identifier: pendingIdentifier,
-      resetToken,
-      newPassword: form.password,
-    }))
+    dispatch(ResetPasswordAction({ identifier: pendingIdentifier, resetToken, newPassword: form.password }))
   }
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
@@ -37,18 +33,17 @@ export default function ResetPassword() {
   return (
     <AuthCard title="Set new password" subtitle="Choose a strong password for your account">
       <form onSubmit={handleSubmit} noValidate>
-        <FormField
+        <PasswordField
           label="New password"
-          type="password"
           placeholder="Min. 8 characters"
           value={form.password}
           onChange={set('password')}
           error={fieldErrors.password}
           autoComplete="new-password"
+          showStrength
         />
-        <FormField
+        <PasswordField
           label="Confirm new password"
-          type="password"
           placeholder="Re-enter password"
           value={form.confirm}
           onChange={set('confirm')}

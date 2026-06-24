@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import AuthCard from '../../../components/AuthCard'
 import FormField from '../../../components/FormField'
 import IdentifierInput from '../../../components/IdentifierInput'
+import PasswordField from '../../../components/PasswordField'
 import Button from '../../../components/Button'
 import { SignUpAction, setScreen } from '../AuthSlice'
 import { AUTH_SCREENS, IDENTIFIER_TYPE } from '../../../constants/authConstants'
@@ -46,13 +47,12 @@ export default function SignUp() {
     const errors = validate()
     if (Object.keys(errors).length) { setFieldErrors(errors); return }
     setFieldErrors({})
-    const payload = {
+    dispatch(SignUpAction({
       firstName: form.firstName.trim(),
       lastName: form.lastName.trim(),
       [identifierType === IDENTIFIER_TYPE.EMAIL ? 'email' : 'phone']: form.identifier,
       password: form.password,
-    }
-    dispatch(SignUpAction(payload))
+    }))
   }
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
@@ -93,18 +93,17 @@ export default function SignUp() {
           onTypeChange={(t) => { setIdentifierType(t); setForm((f) => ({ ...f, identifier: '' })); setFieldErrors({}) }}
         />
 
-        <FormField
+        <PasswordField
           label="Password"
-          type="password"
           placeholder="Min. 8 characters"
           value={form.password}
           onChange={set('password')}
           error={fieldErrors.password}
           autoComplete="new-password"
+          showStrength
         />
-        <FormField
+        <PasswordField
           label="Confirm password"
-          type="password"
           placeholder="Re-enter password"
           value={form.confirm}
           onChange={set('confirm')}

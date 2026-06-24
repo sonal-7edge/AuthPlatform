@@ -92,6 +92,15 @@ export const DeleteAccountAction = createAsyncThunk(
   }
 )
 
+export const ResendOtpAction = createAsyncThunk(
+  'auth/resendOtp',
+  async (payload, { rejectWithValue }) => {
+    const result = await AuthService.ResendOtp(payload)
+    if (result.error) return rejectWithValue(result.message)
+    return result.data
+  }
+)
+
 export const FetchTokensAction = createAsyncThunk(
   'auth/fetchTokens',
   async (_, { getState, rejectWithValue }) => {

@@ -97,6 +97,11 @@ export const AuthMockService = {
     }
   },
 
+  async ResendOtp() {
+    await delay(600)
+    return { error: false, data: { message: 'OTP resent' } }
+  },
+
   async SignOut() {
     await delay(300)
     return { error: false, data: { message: 'Signed out' } }

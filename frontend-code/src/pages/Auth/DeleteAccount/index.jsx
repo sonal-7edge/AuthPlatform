@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import AuthCard from '../../../components/AuthCard'
-import FormField from '../../../components/FormField'
+import PasswordField from '../../../components/PasswordField'
 import { DeleteAccountAction, setScreen } from '../AuthSlice'
 import { AUTH_SCREENS } from '../../../constants/authConstants'
 
@@ -20,18 +20,20 @@ export default function DeleteAccount() {
     dispatch(DeleteAccountAction({ password }))
   }
 
+  const displayContact = user?.email || user?.phone || 'your account'
+
   return (
     <AuthCard title="Delete account" subtitle="This action is permanent and cannot be undone">
       <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-5">
         <p className="text-sm text-red-700 font-medium mb-1">You are about to delete:</p>
-        <p className="text-sm text-red-600">{user?.email || user?.firstName || 'your account'}</p>
+        <p className="text-sm text-red-600 font-mono">{displayContact}</p>
         <p className="text-xs text-red-500 mt-2">
           All your data will be permanently removed. This cannot be reversed.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} noValidate>
-        <label className="flex items-start gap-2.5 mb-4 cursor-pointer">
+        <label className="flex items-start gap-2.5 mb-4 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={confirmed}
@@ -43,9 +45,8 @@ export default function DeleteAccount() {
           </span>
         </label>
 
-        <FormField
+        <PasswordField
           label="Enter your password to confirm"
-          type="password"
           placeholder="••••••••"
           value={password}
           onChange={(e) => setPassword(e.target.value)}

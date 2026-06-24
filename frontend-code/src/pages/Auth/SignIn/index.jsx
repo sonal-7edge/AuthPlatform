@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import AuthCard from '../../../components/AuthCard'
-import FormField from '../../../components/FormField'
 import IdentifierInput from '../../../components/IdentifierInput'
+import PasswordField from '../../../components/PasswordField'
 import Button from '../../../components/Button'
 import { SignInAction, setScreen } from '../AuthSlice'
 import { AUTH_SCREENS, IDENTIFIER_TYPE } from '../../../constants/authConstants'
@@ -53,9 +53,8 @@ export default function SignIn() {
           onTypeChange={(t) => { setIdentifierType(t); setForm((f) => ({ ...f, identifier: '' })); setFieldErrors({}) }}
         />
 
-        <FormField
+        <PasswordField
           label="Password"
-          type="password"
           placeholder="••••••••"
           value={form.password}
           onChange={set('password')}

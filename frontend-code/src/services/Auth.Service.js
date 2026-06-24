@@ -96,6 +96,15 @@ async function RefreshToken(payload) {
   }
 }
 
+async function ResendOtp(payload) {
+  try {
+    const { data } = await axios.post(`${baseURL}/auth/resend-otp`, payload)
+    return { error: false, data }
+  } catch (error) {
+    return handleErrorResponse(error)
+  }
+}
+
 async function SignOut(payload) {
   try {
     const { data } = await axios.post(`${baseURL}/auth/logout`, payload)
@@ -107,4 +116,4 @@ async function SignOut(payload) {
 
 export const AuthService = USE_MOCK
   ? AuthMockService
-  : { SignUp, SignIn, VerifyOtp, ForgotPassword, VerifyResetOtp, ResetPassword, ChangePassword, DeleteAccount, FetchTokens, RefreshToken, SignOut }
+  : { SignUp, SignIn, VerifyOtp, ForgotPassword, VerifyResetOtp, ResetPassword, ChangePassword, DeleteAccount, ResendOtp, FetchTokens, RefreshToken, SignOut }
