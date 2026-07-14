@@ -1,0 +1,21 @@
+{
+  "name": "auth-client-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Throwaway demo app for manually testing auth-client's AuthFlow UI in mock mode. Not published.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "auth-client": "file:..",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "vite": "^8.0.12"
+  }
+}
