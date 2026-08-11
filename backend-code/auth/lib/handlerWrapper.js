@@ -14,6 +14,7 @@ const COGNITO_ERROR_RESPONSES = {
     InvalidPasswordException: (error) => badRequest(error.message || 'Password does not meet the required policy'),
     LimitExceededException: () => badRequest('Too many attempts, please try again later'),
     TooManyRequestsException: () => badRequest('Too many attempts, please try again later'),
+    TooManyFailedAttemptsException: () => badRequest('Too many attempts, please try again later'),
     UserNotConfirmedException: () => badRequest('Account is not confirmed'),
 }
 

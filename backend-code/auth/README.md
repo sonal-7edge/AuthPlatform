@@ -21,6 +21,12 @@ auth/
 | `/auth/verify-otp` | `handlers/verify_otp.js` | `{identifier,otp}` | `{idToken,refreshToken,user}` |
 | `/auth/logout` | `handlers/logout.js` | `Authorization: Bearer <idToken>` | `{message}` |
 | `/auth/refresh` | `handlers/refresh_token.js` | `{refreshToken}` | `{idToken,refreshToken}` |
+| `/auth/resend-otp` | `handlers/resend_otp.js` | `{identifier}` | `{message}` |
+| `/auth/forgot-password` | `handlers/forgot_password.js` | `{email\|phone}` | `{message}` |
+| `/auth/verify-reset-otp` | `handlers/verify_reset_otp.js` | `{identifier,otp}` | `{resetToken}` |
+| `/auth/reset-password` | `handlers/reset_password.js` | `{resetToken,newPassword}` | `{message}` |
+| `/auth/change-password` | `handlers/change_password.js` | `Authorization: Bearer <idToken>`, `{currentPassword,newPassword}` | `{message}` |
+| `/auth/delete-account` | `handlers/delete_account.js` | `Authorization: Bearer <idToken>`, `{password}` | `{message}` |
 | `/auth/tokens` | `handlers/tokens.js` | `{email}` | **501 — not implemented, see below** |
 
 Plus three Cognito **Lambda triggers** that implement the OTP mechanism itself:
@@ -66,13 +72,15 @@ This package assumes a User Pool + App Client already exist with:
   - `VerifyAuthChallengeResponse` → `handlers/verify_auth_challenge_response.js`
 - IAM execution role for every handler in this package needs `cognito-idp:AdminInitiateAuth`,
   `cognito-idp:AdminConfirmSignUp`, `cognito-idp:AdminUserGlobalSignOut`,
-  `cognito-idp:AdminGetUser` scoped to the pool, plus `ses:SendEmail` / `sns:Publish` for the
-  three trigger Lambdas (OTP delivery).
+  `cognito-idp:AdminGetUser`, `cognito-idp:AdminSetUserPassword`, `cognito-idp:AdminDeleteUser`
+  scoped to the pool, plus `ses:SendEmail` / `sns:Publish` for the three trigger Lambdas (OTP
+  delivery) and for Cognito's own ForgotPassword code delivery.
 
 ## Environment variables
 
 See `.env.example`: `AWS_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
-`COGNITO_CLIENT_SECRET` (optional), `SES_FROM_EMAIL`, `OTP_TTL_SECONDS`.
+`COGNITO_CLIENT_SECRET` (optional), `SES_FROM_EMAIL`, `OTP_TTL_SECONDS`, `RESET_TOKEN_SECRET`
+(required — signs the forgot-password `resetToken`), `RESET_TOKEN_TTL_SECONDS`.
 
 ## Known limitation — `/auth/refresh` and app clients with a secret
 
@@ -90,16 +98,25 @@ identity would be a security hole, so this handler always returns `501`. If this
 something real, the `auth-client` contract needs to change first (e.g. carry a refresh token
 or a signed session artifact) — flag with whoever owns CNE-444.
 
-## Deferred to a follow-up pass
+## Forgot-password design note
 
-`resend-otp`, `forgot-password`, `verify-reset-otp`, `reset-password`, `change-password`,
-`delete-account` — all reuse `lib/Cognito.js` and `lib/verifyIdToken.js`. One design note for
-whoever picks these up: Cognito's native `ConfirmForgotPassword` needs the new password at the
-same time as the code, but the `auth-client` contract splits "verify code" and "set new
-password" into two separate calls. Bridge that by calling `ConfirmForgotPassword` with a
-throwaway random password at verify-time (spends the code), returning a signed short-lived
-`resetToken`, then using `AdminSetUserPassword` with the real new password when `reset-password`
-is called with that token.
+Cognito's native `ConfirmForgotPassword` needs the new password at the same time as the code,
+but the `auth-client` contract splits "verify code" and "set new password" into two separate
+calls (`verify-reset-otp` then `reset-password`). Bridged by calling `ConfirmForgotPassword`
+with a throwaway random password inside `verify_reset_otp.js` (spends the code, proves it was
+correct), returning a signed short-lived `resetToken` (`lib/resetToken.js`, HMAC-SHA256 over
+`RESET_TOKEN_SECRET`), then `reset_password.js` uses `AdminSetUserPassword` with the real new
+password when called with that token.
+
+`change_password.js` and `delete_account.js` re-verify the caller's current password via
+`AdminInitiateAuth(ADMIN_USER_PASSWORD_AUTH)` — the same check round 1 of sign-in uses — since
+the client only ever holds an idToken, never an accessToken, so Cognito's own
+`ChangePassword`/`DeleteUser` APIs (which take an access token) aren't usable here; both use the
+admin (`AdminSetUserPassword` / `AdminDeleteUser`) equivalents instead.
+
+`resend_otp.js` has no dedicated Cognito mechanism to hook into — every wrong answer to the OTP
+round already makes `create_auth_challenge.js` issue a fresh code, so resend reuses that by
+submitting an answer that can never match, at the cost of one of the `MAX_OTP_ATTEMPTS` retries.
 
 ## Running locally
 
