@@ -1,0 +1,6 @@
+# Deployment packages produced by deploy.sh
+build/
+
+# Per-environment deploy settings (may hold pool ids / ARNs)
+config/.env.*
+!config/.env.example
