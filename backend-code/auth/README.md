@@ -71,8 +71,10 @@ This package assumes a User Pool + App Client already exist with:
 
 ## Environment variables
 
-See `.env.example`: `AWS_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
-`COGNITO_CLIENT_SECRET` (optional), `SES_FROM_EMAIL`, `OTP_TTL_SECONDS`.
+`COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET` (optional),
+`SES_FROM_EMAIL`, `OTP_TTL_SECONDS`, `CORS_ALLOW_ORIGIN`. `AWS_REGION` comes from the Lambda
+runtime. All of them are set once in `template.yaml` under `Globals.Function.Environment` and
+fed from stack parameters — see [docs/api-infrastructure.md](docs/api-infrastructure.md#8-environment-variables).
 
 ## Known limitation — `/auth/refresh` and app clients with a secret
 
@@ -103,7 +105,10 @@ is called with that token.
 
 ## Running locally
 
+From `backend-code/`, not from here:
+
 ```bash
+cd backend-code
 npm install
 npm test    # jest, mocks CognitoIdentityProviderClient via aws-sdk-client-mock — no AWS account needed
 npm run lint
@@ -113,3 +118,84 @@ There is no live Cognito User Pool in this environment, so these tests are the e
 verification possible here. End-to-end verification against a real pool (with the three
 triggers wired into its Lambda config) and the running `auth-client` / `frontend-code` is a
 manual follow-up once a dev pool exists (CNE-442).
+
+## Deploying with SAM
+
+`template.yaml` is a single hand-edited SAM template: one Lambda + CloudWatch log group per
+handler, an API Gateway REST API in front of the routed ones, invoke permissions for the three
+Cognito triggers, and one shared IAM role.
+
+Dependencies and every command live at `backend-code/` — `auth/` holds only source, docs and the
+template. `CodeUri` in the template is `../` for that reason, which is also why each `Handler` is
+`auth/handlers/<name>.handler`.
+
+```bash
+cd backend-code
+npm install                        # handlers need the AWS SDK on disk
+sam validate -t auth/template.yaml --lint
+sam build    -t auth/template.yaml --cached --parallel
+```
+
+First deploy — `--guided` prompts for each parameter and saves your answers to `samconfig.toml`
+(gitignored, since it will hold your pool ids):
+
+```bash
+sam deploy --guided
+```
+
+Or pass everything explicitly:
+
+```bash
+sam deploy \
+  --stack-name authplatform-dev-auth \
+  --region ap-south-1 \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --resolve-s3 \
+  --no-fail-on-empty-changeset \
+  --parameter-overrides \
+    Environment=dev \
+    CognitoUserPoolId=ap-south-1_AbCdEf123 \
+    CognitoUserPoolArn=arn:aws:cognito-idp:ap-south-1:111122223333:userpool/ap-south-1_AbCdEf123 \
+    CognitoUserPoolClientId=1h57kf5cpq17m0eml12EXAMPLE \
+    SesFromEmail=no-reply@example.com
+```
+
+Redeploys after the first are `sam build -t auth/template.yaml --cached --parallel && sam deploy`.
+
+Two things to do once, right after the first deploy — both are explained in
+[docs/api-infrastructure.md](docs/api-infrastructure.md#5-deploying):
+
+1. **Attach the three triggers to the user pool.** The stack creates them and grants the pool
+   permission to invoke them, but does not modify the pool. Until they're attached,
+   `CUSTOM_AUTH` fails, which means signup, signin and verify-otp all fail.
+2. **In a brand-new account,** add `ManageApiGatewayAccount=true` to the parameter overrides so
+   the stack creates API Gateway's account-wide CloudWatch Logs role. Without it the stage's
+   access logging fails at create time.
+
+### Testing it
+
+```bash
+sam local start-api --port 3000
+
+curl -s localhost:3000/auth/signup -H 'Content-Type: application/json' \
+  -d '{"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com","password":"Str0ng-Passw0rd!"}'
+
+# one function, no API Gateway — event on stdin
+echo '{"request":{"session":[{"challengeResult":true,"challengeMetadata":"PASSWORD_VERIFIER"}]},"response":{}}' \
+  | sam local invoke DefineAuthChallengeFunction --event -
+
+# logs from the deployed stack
+sam logs --stack-name authplatform-dev-auth --name SignupFunction --tail
+```
+
+`sam local` needs the same environment variables the stack sets. Pass them with
+`--env-vars`, or export them into a file first — see the docs.
+
+### Adding an endpoint
+
+Copy two blocks in `template.yaml` and change five values. Full walkthrough:
+[docs/api-infrastructure.md §3](docs/api-infrastructure.md#3-adding-an-endpoint).
+
+> **Known blocker:** `/auth/signin` → `/auth/verify-otp` cannot work across separate Lambdas yet —
+> `lib/challengeSessionStore.js` is in-memory. See
+> [docs/api-infrastructure.md §6](docs/api-infrastructure.md#6-things-that-will-bite-you).

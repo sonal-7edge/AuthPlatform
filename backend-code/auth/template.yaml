@@ -1,0 +1,742 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  AuthPlatform auth API — one Lambda + CloudWatch log group per handler,
+  an API Gateway REST API in front of the routed ones, and the three
+  Cognito CUSTOM_AUTH trigger functions.
+
+# ===========================================================================
+# HOW TO ADD AN ENDPOINT
+#
+#   1. Write the handler:  handlers/my-thing.js  ->  exports.handler
+#   2. Copy any block from the "ROUTES" section below and change five things:
+#        the two logical ids   MyThingLogGroup / MyThingFunction
+#        LogGroupName suffix   -my-thing
+#        FunctionName suffix   -my-thing
+#        Handler               auth/handlers/my-thing.handler
+#        Path                  /auth/my-thing
+#   3. Protected route? add the Auth block (see ChangePasswordFunction).
+#   4. From backend-code/ (where package.json is):
+#        sam build -t auth/template.yaml --cached --parallel && sam deploy
+#
+# Everything shared — runtime, memory, timeout, env vars — is in Globals, so
+# a new endpoint is ~18 lines and repeats nothing.
+#
+# Handler paths carry the "auth/" prefix because CodeUri is backend-code/ —
+# that is where package.json lives, and sam installs dependencies from the
+# package.json inside CodeUri.
+#
+# The log group is separate from the function on purpose: it is the only way
+# to control retention. Without it Lambda creates the group itself on first
+# invocation and keeps logs forever.
+# ===========================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Naming }
+        Parameters: [ProjectName, Environment, ApiStageName]
+      - Label: { default: Cognito }
+        Parameters:
+          - CognitoUserPoolId
+          - CognitoUserPoolArn
+          - CognitoUserPoolClientId
+          - CognitoClientSecret
+      - Label: { default: OTP delivery }
+        Parameters: [SesFromEmail, OtpTtlSeconds]
+      - Label: { default: Observability & limits }
+        Parameters:
+          - CorsAllowOrigin
+          - LogRetentionInDays
+          - LogLevel
+          - ThrottlingRateLimit
+          - ThrottlingBurstLimit
+          - EnableXRayTracing
+          - ManageApiGatewayAccount
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: authplatform
+    AllowedPattern: "^[a-z][a-z0-9-]{1,28}[a-z0-9]$"
+    Description: Prefix for every resource name created by this stack.
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment.
+
+  ApiStageName:
+    Type: String
+    Default: v1
+    AllowedPattern: "^[a-zA-Z0-9_-]+$"
+    Description: Stage name; becomes the first path segment of the invoke URL.
+
+  CognitoUserPoolId:
+    Type: String
+    Description: User pool the handlers talk to. Reaches them as COGNITO_USER_POOL_ID.
+
+  CognitoUserPoolArn:
+    Type: String
+    AllowedPattern: "^arn:aws[a-zA-Z-]*:cognito-idp:.+$"
+    Description: >-
+      Same pool as an ARN. Needed twice: the API's Cognito authorizer, and the
+      permission that lets the pool invoke the trigger functions.
+
+  CognitoUserPoolClientId:
+    Type: String
+    Description: App client id. Reaches the handlers as COGNITO_CLIENT_ID.
+
+  # lib/Cognito.js computes SECRET_HASH from the literal secret, so the value
+  # itself has to reach the runtime — an ARN would not be enough.
+  CognitoClientSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: App client secret, if the client has one. Empty for a public client.
+
+  SesFromEmail:
+    Type: String
+    Default: ""
+    Description: Verified SES sender for OTP emails. Email OTPs fail without it.
+
+  OtpTtlSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 60
+    MaxValue: 3600
+    Description: How long an issued OTP stays valid.
+
+  CorsAllowOrigin:
+    Type: String
+    Default: "*"
+    Description: Value returned in Access-Control-Allow-Origin. Lock this down outside dev.
+
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 3653]
+    Description: Retention applied to every log group this stack creates.
+
+  LogLevel:
+    Type: String
+    Default: info
+    AllowedValues: [debug, info, warn, error]
+    Description: LOG_LEVEL environment variable passed to every function.
+
+  ThrottlingRateLimit:
+    Type: Number
+    Default: 50
+    Description: Steady-state requests per second per method.
+
+  ThrottlingBurstLimit:
+    Type: Number
+    Default: 100
+    Description: Burst capacity per method.
+
+  EnableXRayTracing:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Active tracing on the API stage and every function.
+
+  ManageApiGatewayAccount:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Set true once per account/region to let this stack own the API Gateway
+      CloudWatch Logs role. Leave false if another stack already set it.
+
+Conditions:
+  HasClientSecret: !Not [!Equals [!Ref CognitoClientSecret, ""]]
+  XRayEnabled: !Equals [!Ref EnableXRayTracing, "true"]
+  ManageApiGatewayAccountSetting: !Equals [!Ref ManageApiGatewayAccount, "true"]
+
+# ---------------------------------------------------------------------------
+# Shared by every function below.
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures: [arm64]
+    # backend-code/ — sam copies it and installs the production dependencies
+    # from backend-code/package.json. Handlers are therefore auth/handlers/*.
+    CodeUri: ../
+    MemorySize: 256
+    Timeout: 15
+    Role: !GetAtt LambdaExecutionRole.Arn
+    Tracing: !If [XRayEnabled, Active, PassThrough]
+    Environment:
+      Variables:
+        NODE_OPTIONS: --enable-source-maps
+        PROJECT_NAME: !Ref ProjectName
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: !Ref LogLevel
+        # These names are what lib/Cognito.js and lib/verifyIdToken.js read.
+        COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+        COGNITO_CLIENT_ID: !Ref CognitoUserPoolClientId
+        COGNITO_CLIENT_SECRET: !Ref CognitoClientSecret
+        SES_FROM_EMAIL: !Ref SesFromEmail
+        OTP_TTL_SECONDS: !Ref OtpTtlSeconds
+        CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
+
+Resources:
+
+  # =========================================================================
+  # API GATEWAY
+  # =========================================================================
+
+  AuthApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-auth-api
+      Description: AuthPlatform authentication API
+      StageName: !Ref ApiStageName
+      EndpointConfiguration:
+        Type: REGIONAL
+      MinimumCompressionSize: 1024
+      TracingEnabled: !If [XRayEnabled, true, false]
+      # API Gateway answers OPTIONS itself (MOCK integration), so a browser
+      # preflight never pays for a Lambda cold start. The single quotes inside
+      # these strings are required — API Gateway wants a quoted literal.
+      Cors:
+        AllowOrigin: !Sub "'${CorsAllowOrigin}'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'"
+        AllowMethods: "'OPTIONS,POST'"
+        MaxAge: "'600'"
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !Ref CognitoUserPoolArn
+            Identity:
+              Header: Authorization
+        # No DefaultAuthorizer on purpose: a public route is one with no Auth
+        # block. SAM only accepts the literal "NONE" when a default exists.
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency","responseLatency":"$context.responseLatency","userAgent":"$context.identity.userAgent","errorMessage":"$context.error.message"}
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
+          DataTraceEnabled: false
+          MetricsEnabled: true
+          ThrottlingRateLimit: !Ref ThrottlingRateLimit
+          ThrottlingBurstLimit: !Ref ThrottlingBurstLimit
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${ProjectName}-${Environment}-auth
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # A 401/403/429 raised by API Gateway itself carries no CORS headers without
+  # these, and shows up in the browser as an opaque network error.
+  GatewayResponseDefault4XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref AuthApi
+      ResponseType: DEFAULT_4XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowOrigin}'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
+  GatewayResponseDefault5XX:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref AuthApi
+      ResponseType: DEFAULT_5XX
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Origin: !Sub "'${CorsAllowOrigin}'"
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,Authorization'"
+
+  # API Gateway stores its CloudWatch Logs role per account+region, not per
+  # stack. Stage access logging fails at create time if nothing has ever set
+  # it, so this stack takes ownership only when asked to.
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Condition: ManageApiGatewayAccountSetting
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-apigw-logs-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: apigateway.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Condition: ManageApiGatewayAccountSetting
+    DependsOn: ApiGatewayCloudWatchRole
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
+  # =========================================================================
+  # IAM — one execution role shared by all fifteen functions
+  # =========================================================================
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-auth-lambda-role
+      Description: Execution role shared by every auth function.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: auth-service-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: WriteFunctionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-*:*
+
+              - Sid: CognitoUserPoolAccess
+                Effect: Allow
+                Action:
+                  - cognito-idp:SignUp
+                  - cognito-idp:ConfirmSignUp
+                  - cognito-idp:ResendConfirmationCode
+                  - cognito-idp:InitiateAuth
+                  - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:ForgotPassword
+                  - cognito-idp:ConfirmForgotPassword
+                  - cognito-idp:ChangePassword
+                  - cognito-idp:GetUser
+                  - cognito-idp:DeleteUser
+                  - cognito-idp:GlobalSignOut
+                  - cognito-idp:RevokeToken
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminConfirmSignUp
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminRespondToAuthChallenge
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminUserGlobalSignOut
+                Resource: !Ref CognitoUserPoolArn
+
+              # lib/notifier.js sends the OTP email through SESv2.
+              - Sid: SendOtpEmail
+                Effect: Allow
+                Action: ses:SendEmail
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/*
+
+              # An SMS OTP is a bare sns:Publish to a phone number, which has
+              # no resource ARN to scope to. The condition at least limits this
+              # to topic-less publishes.
+              - Sid: SendOtpSms
+                Effect: Allow
+                Action: sns:Publish
+                Resource: "*"
+                Condition:
+                  "Null":
+                    sns:TopicArn: "true"
+
+              - !If
+                - XRayEnabled
+                - Sid: XRayTracing
+                  Effect: Allow
+                  Action:
+                    - xray:PutTraceSegments
+                    - xray:PutTelemetryRecords
+                  Resource: "*"
+                - !Ref AWS::NoValue
+
+  # =========================================================================
+  # ROUTES — public (no Auth block)
+  # =========================================================================
+
+  SignupLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-signup
+      RetentionInDays: !Ref LogRetentionInDays
+
+  SignupFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SignupLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-signup
+      Description: Register a new user in the Cognito user pool
+      # The implemented handler is sign_up.js, not signup.js.
+      Handler: auth/handlers/sign_up.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/signup
+            Method: post
+
+  SigninLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-signin
+      RetentionInDays: !Ref LogRetentionInDays
+
+  SigninFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SigninLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-signin
+      Description: Authenticate a user and start the OTP challenge
+      Handler: auth/handlers/sign_in.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/signin
+            Method: post
+
+  VerifyOtpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-verify-otp
+      RetentionInDays: !Ref LogRetentionInDays
+
+  VerifyOtpFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: VerifyOtpLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-verify-otp
+      Description: Complete the OTP round and return tokens
+      Handler: auth/handlers/verify_otp.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/verify-otp
+            Method: post
+
+  RefreshLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-refresh
+      RetentionInDays: !Ref LogRetentionInDays
+
+  RefreshFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: RefreshLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-refresh
+      Description: Exchange a refresh token for a new id token
+      Handler: auth/handlers/refresh_token.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/refresh
+            Method: post
+
+  TokensLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-tokens
+      RetentionInDays: !Ref LogRetentionInDays
+
+  TokensFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: TokensLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-tokens
+      Description: Exchange an auth session for tokens — returns 501 for now
+      Handler: auth/handlers/tokens.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/tokens
+            Method: post
+
+  # --- below here the handlers are still 501 stubs -------------------------
+
+  ResendOtpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-resend-otp
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ResendOtpFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ResendOtpLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-resend-otp
+      Description: Resend the confirmation code
+      Handler: auth/handlers/resend-otp.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/resend-otp
+            Method: post
+
+  ForgotPasswordLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-forgot-password
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ForgotPasswordFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ForgotPasswordLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-forgot-password
+      Description: Start the forgot-password flow
+      Handler: auth/handlers/forgot-password.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/forgot-password
+            Method: post
+
+  VerifyResetOtpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-verify-reset-otp
+      RetentionInDays: !Ref LogRetentionInDays
+
+  VerifyResetOtpFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: VerifyResetOtpLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-verify-reset-otp
+      Description: Validate the password reset code
+      Handler: auth/handlers/verify-reset-otp.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/verify-reset-otp
+            Method: post
+
+  ResetPasswordLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-reset-password
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ResetPasswordFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ResetPasswordLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-reset-password
+      Description: Complete the forgot-password flow with a new password
+      Handler: auth/handlers/reset-password.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/reset-password
+            Method: post
+
+  # =========================================================================
+  # ROUTES — protected by the Cognito authorizer
+  # =========================================================================
+
+  LogoutLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-logout
+      RetentionInDays: !Ref LogRetentionInDays
+
+  LogoutFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: LogoutLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-logout
+      Description: Globally sign the user out and revoke their tokens
+      Handler: auth/handlers/logout.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/logout
+            Method: post
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  ChangePasswordLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-change-password
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ChangePasswordFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ChangePasswordLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-change-password
+      Description: Change the password of the signed-in user
+      Handler: auth/handlers/change-password.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/change-password
+            Method: post
+            # This is all a protected route needs — API Gateway validates the
+            # JWT and puts the claims on event.requestContext.authorizer.claims.
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  DeleteAccountLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-delete-account
+      RetentionInDays: !Ref LogRetentionInDays
+
+  DeleteAccountFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: DeleteAccountLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-delete-account
+      Description: Delete the signed-in user from the user pool
+      Handler: auth/handlers/delete-account.handler
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AuthApi
+            Path: /auth/delete-account
+            Method: post
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  # =========================================================================
+  # COGNITO TRIGGERS
+  #
+  # No Api event: the user pool invokes these directly, which is what the
+  # Lambda::Permission next to each one allows. They are not attached to the
+  # pool by this stack — see the LambdaConfigForUserPool output.
+  # =========================================================================
+
+  DefineAuthChallengeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-define-auth-challenge
+      RetentionInDays: !Ref LogRetentionInDays
+
+  DefineAuthChallengeFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: DefineAuthChallengeLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-define-auth-challenge
+      Description: Drives the CUSTOM_AUTH chain — password round, then OTP round
+      Handler: auth/handlers/define_auth_challenge.handler
+
+  DefineAuthChallengePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt DefineAuthChallengeFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !Ref CognitoUserPoolArn
+
+  CreateAuthChallengeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-create-auth-challenge
+      RetentionInDays: !Ref LogRetentionInDays
+
+  CreateAuthChallengeFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: CreateAuthChallengeLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-create-auth-challenge
+      Description: Builds each challenge and sends the OTP over SES / SNS
+      Handler: auth/handlers/create_auth_challenge.handler
+
+  CreateAuthChallengePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt CreateAuthChallengeFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !Ref CognitoUserPoolArn
+
+  VerifyAuthChallengeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-verify-auth-challenge
+      RetentionInDays: !Ref LogRetentionInDays
+
+  VerifyAuthChallengeFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: VerifyAuthChallengeLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-verify-auth-challenge
+      Description: Checks the password against Cognito, then the OTP hash
+      Handler: auth/handlers/verify_auth_challenge_response.handler
+
+  VerifyAuthChallengePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt VerifyAuthChallengeFunction.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !Ref CognitoUserPoolArn
+
+Outputs:
+  ApiInvokeUrl:
+    Description: Base URL for the auth API — set this as VITE_API_BASE_URL.
+    Value: !Sub https://${AuthApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${ApiStageName}
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-auth-api-url
+
+  RestApiId:
+    Description: API Gateway REST API id.
+    Value: !Ref AuthApi
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-auth-api-id
+
+  StageName:
+    Description: Deployed stage name.
+    Value: !Ref ApiStageName
+
+  LambdaExecutionRoleArn:
+    Description: Execution role shared by the auth functions.
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-auth-lambda-role-arn
+
+  ApiAccessLogGroupName:
+    Description: CloudWatch log group receiving API Gateway access logs.
+    Value: !Ref ApiAccessLogGroup
+
+  UsingClientSecret:
+    Description: Whether SECRET_HASH will be computed (an app client secret was supplied).
+    Value: !If [HasClientSecret, "yes", "no"]
+
+  LambdaConfigForUserPool:
+    Description: >-
+      LambdaConfig for the user pool. update-user-pool REPLACES the whole pool
+      config, so merge this into describe-user-pool's output rather than passing
+      it alone — or just set the three triggers in the Cognito console.
+    Value: !Sub >-
+      {"DefineAuthChallenge":"${DefineAuthChallengeFunction.Arn}","CreateAuthChallenge":"${CreateAuthChallengeFunction.Arn}","VerifyAuthChallengeResponse":"${VerifyAuthChallengeFunction.Arn}"}
