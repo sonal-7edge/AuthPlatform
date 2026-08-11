@@ -1,21 +1,21 @@
-/* POST /auth/logout
-   Globally sign the user out and revoke their tokens
+const Cognito = require('../lib/Cognito')
+const { verifyIdToken } = require('../lib/verifyIdToken')
+const { withErrorHandling } = require('../lib/handlerWrapper')
+const { ok, getHeader } = require('../lib/helpers')
 
-   Protected by the cognito authorizer; the caller identity is on event.requestContext.authorizer. */
+/**
+ * POST /auth/logout — Authorization: Bearer <idToken> -> { message }
+ *
+ * Revokes every refresh token issued to this user (AdminUserGlobalSignOut),
+ * so logout actually invalidates the session server-side instead of just
+ * discarding tokens client-side.
+ */
+module.exports.handler = withErrorHandling(async (event, deps = {}) => {
+    const verify_id_token = deps.verifyIdToken || verifyIdToken
+    const claims = await verify_id_token(getHeader(event, 'Authorization'))
 
-const { json, badRequest, serverError } = require('../utils/helpers')
+    const cognito = deps.cognito || new Cognito()
+    await cognito.globalSignOut(claims['cognito:username'] || claims.sub)
 
-exports.handler = async (event) => {
-    try {
-        const payload = event.body ? JSON.parse(event.body) : {}
-
-        // TODO: implement logout
-        void payload
-
-        return json(501, { message: 'logout is not implemented yet' })
-    } catch (error) {
-        if (error instanceof SyntaxError) return badRequest('Request body must be valid JSON.')
-        console.error('logout failed', error)
-        return serverError()
-    }
-}
+    return ok({ message: 'Signed out' })
+})

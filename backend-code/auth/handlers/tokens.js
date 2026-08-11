@@ -1,21 +1,14 @@
-/* POST /auth/tokens
-   Exchange an authorization code / auth session for tokens
+const { response } = require('../lib/helpers')
 
-   Public route — no authorizer in front of it. */
-
-const { json, badRequest, serverError } = require('../utils/helpers')
-
-exports.handler = async (event) => {
-    try {
-        const payload = event.body ? JSON.parse(event.body) : {}
-
-        // TODO: implement tokens
-        void payload
-
-        return json(501, { message: 'tokens is not implemented yet' })
-    } catch (error) {
-        if (error instanceof SyntaxError) return badRequest('Request body must be valid JSON.')
-        console.error('tokens failed', error)
-        return serverError()
-    }
-}
+/**
+ * POST /auth/tokens — { email } -> 501
+ *
+ * Deliberately unimplemented. The auth-client contract calls this with only
+ * an email — no password, OTP, or refresh token — which would let anyone
+ * mint tokens for any user by knowing their email. It's currently dead code
+ * on the client (no UI screen calls it). Flagging as a contract gap for the
+ * auth-client owner to revisit rather than building an insecure endpoint.
+ */
+module.exports.handler = async () => response(501, {
+    message: 'Not implemented — /auth/tokens as specified (identify-by-email only) is not a safe way to issue tokens. See auth/README.md.',
+})
