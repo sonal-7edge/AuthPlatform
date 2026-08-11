@@ -4,7 +4,12 @@
   "description": "Backend service",
   "main": "server.js",
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "endpoints": "node auth/cli/endpoint.js",
+    "endpoints:list": "node auth/cli/endpoint.js list",
+    "endpoints:generate": "node auth/cli/endpoint.js generate",
+    "endpoints:check": "node auth/cli/endpoint.js check",
+    "deploy": "bash auth/deploy.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
