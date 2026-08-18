@@ -1,5 +1,4 @@
 const Cognito = require('../lib/Cognito')
-const { startOtpChallenge } = require('../lib/otpChallenge')
 const { withErrorHandling } = require('../lib/handlerWrapper')
 const { ok, badRequest, parseBody, resolveIdentifier } = require('../lib/helpers')
 
@@ -14,11 +13,13 @@ function buildUserAttributes({ first_name, last_name, identifier, identifier_typ
 /**
  * POST /auth/signup — { firstName, lastName, email|phone, password } -> { message }
  *
- * Creates the Cognito user and confirms it server-side (AdminConfirmSignUp)
- * so Cognito's own confirmation code is never sent — there is only ever one
- * OTP mechanism in the system (the custom-auth challenge chain), and the
- * newly-created user goes straight into the same OTP round sign_in.js uses,
- * so verify_otp.js is the single completion point for both flows.
+ * Creates the user and leaves it UNCONFIRMED on purpose: that is what makes
+ * Cognito send its own verification code, from the user pool's own message
+ * configuration. verify_otp.js spends that code.
+ *
+ * The pool must list the matching attribute under AutoVerifiedAttributes
+ * (email and/or phone_number) or Cognito accepts the sign-up and sends
+ * nothing.
  */
 module.exports.handler = withErrorHandling(async (event, deps = {}) => {
     const body = parseBody(event)
@@ -40,15 +41,10 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
             identifier_type,
         }),
     })
-    await cognito.adminConfirmSignUp(identifier)
 
-    await startOtpChallenge({
-        cognito,
-        store: deps.store,
-        identifier,
-        identifier_type,
-        password: body.password,
+    return ok({
+        message: identifier_type === 'phone'
+            ? 'Verification code sent to your phone'
+            : 'Verification code sent to your email',
     })
-
-    return ok({ message: identifier_type === 'phone' ? 'OTP sent to your phone' : 'OTP sent to your email' })
 })

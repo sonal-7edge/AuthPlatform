@@ -1,14 +1,12 @@
 const crypto = require('crypto')
 const {
     CognitoIdentityProviderClient,
-    InitiateAuthCommand,
-    RespondToAuthChallengeCommand,
+    SignUpCommand,
+    ConfirmSignUpCommand,
+    ResendConfirmationCodeCommand,
     AdminInitiateAuthCommand,
-    AdminRespondToAuthChallengeCommand,
     AdminUserGlobalSignOutCommand,
     AdminGetUserCommand,
-    AdminConfirmSignUpCommand,
-    SignUpCommand,
 } = require('@aws-sdk/client-cognito-identity-provider')
 
 const cognitoClient = new CognitoIdentityProviderClient({
@@ -19,6 +17,10 @@ const cognitoClient = new CognitoIdentityProviderClient({
  * Thin wrapper around the Cognito Identity Provider SDK, mirroring the
  * CognitoHelper class convention used elsewhere in this org so the calling
  * pattern is familiar across repos.
+ *
+ * Verification codes are Cognito's own: SignUp triggers the email, and
+ * ConfirmSignUp spends the code. Nothing here composes or delivers a
+ * message, which is why the service needs no SES or SNS access.
  */
 class Cognito {
     constructor({
@@ -45,6 +47,12 @@ class Cognito {
             .digest('base64')
     }
 
+    /**
+     * Creates the user in an UNCONFIRMED state. Cognito emails (or texts) the
+     * confirmation code itself, using whatever the user pool's own message
+     * configuration is — the pool needs the matching attribute listed under
+     * AutoVerifiedAttributes or no code is sent.
+     */
     async signUp({ username, password, user_attributes = [] }) {
         const command = new SignUpCommand({
             ClientId: this.client_id,
@@ -56,58 +64,36 @@ class Cognito {
         return cognitoClient.send(command)
     }
 
-    async adminConfirmSignUp(username) {
-        const command = new AdminConfirmSignUpCommand({
-            UserPoolId: this.user_pool_id,
+    /** Spends the code Cognito sent, moving the user to CONFIRMED. */
+    async confirmSignUp({ username, code }) {
+        const command = new ConfirmSignUpCommand({
+            ClientId: this.client_id,
             Username: username,
+            ConfirmationCode: code,
+            SecretHash: this.secretHash(username),
         })
         return cognitoClient.send(command)
     }
 
-    async adminGetUser(username) {
-        const command = new AdminGetUserCommand({
-            UserPoolId: this.user_pool_id,
+    /** Re-sends the sign-up confirmation code to the same destination. */
+    async resendConfirmationCode(username) {
+        const command = new ResendConfirmationCodeCommand({
+            ClientId: this.client_id,
             Username: username,
+            SecretHash: this.secretHash(username),
         })
         return cognitoClient.send(command)
     }
 
     /**
-     * Kicks off (or continues) the CUSTOM_AUTH challenge chain as the app
-     * client (not admin) — used to start Sign In / Sign Up OTP flows.
+     * Username + password sign-in, server-side. Returns Cognito's
+     * AuthenticationResult (id / access / refresh tokens) directly.
+     *
+     * Uses the admin flow so the password never has to be verified through a
+     * client-side SRP exchange; the app client must allow
+     * ALLOW_ADMIN_USER_PASSWORD_AUTH.
      */
-    async initiateCustomAuth(username) {
-        const command = new InitiateAuthCommand({
-            AuthFlow: 'CUSTOM_AUTH',
-            ClientId: this.client_id,
-            AuthParameters: {
-                USERNAME: username,
-                SECRET_HASH: this.secretHash(username),
-            },
-        })
-        return cognitoClient.send(command)
-    }
-
-    async respondToAuthChallenge({ username, session, challenge_name, answer }) {
-        const command = new RespondToAuthChallengeCommand({
-            ClientId: this.client_id,
-            ChallengeName: challenge_name,
-            Session: session,
-            ChallengeResponses: {
-                USERNAME: username,
-                ANSWER: answer,
-                SECRET_HASH: this.secretHash(username),
-            },
-        })
-        return cognitoClient.send(command)
-    }
-
-    /**
-     * Admin-side password verification, used inside the
-     * VerifyAuthChallengeResponse trigger to validate round 1 of the
-     * custom-auth chain.
-     */
-    async adminVerifyPassword({ username, password }) {
+    async signIn({ username, password }) {
         const command = new AdminInitiateAuthCommand({
             AuthFlow: 'ADMIN_USER_PASSWORD_AUTH',
             UserPoolId: this.user_pool_id,
@@ -121,17 +107,10 @@ class Cognito {
         return cognitoClient.send(command)
     }
 
-    async adminRespondToAuthChallenge({ username, session, challenge_name, answer }) {
-        const command = new AdminRespondToAuthChallengeCommand({
+    async adminGetUser(username) {
+        const command = new AdminGetUserCommand({
             UserPoolId: this.user_pool_id,
-            ClientId: this.client_id,
-            ChallengeName: challenge_name,
-            Session: session,
-            ChallengeResponses: {
-                USERNAME: username,
-                ANSWER: answer,
-                SECRET_HASH: this.secretHash(username),
-            },
+            Username: username,
         })
         return cognitoClient.send(command)
     }

@@ -1,5 +1,3 @@
-const crypto = require('crypto')
-
 const CORS_HEADERS = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -42,16 +40,6 @@ function parseBody(event) {
 }
 
 /**
- * Cryptographically-random n-digit numeric OTP (default 6 digits), used by
- * create_auth_challenge.js for the OTP round of the custom-auth chain.
- */
-function generateOtp(length = 6) {
-    const max = 10 ** length
-    const value = crypto.randomInt(0, max)
-    return `${value}`.padStart(length, '0')
-}
-
-/**
  * API Gateway may lower/upper-case header names depending on the source
  * (HTTP API vs REST API vs a direct test event) — look up case-insensitively.
  */
@@ -75,6 +63,28 @@ function resolveIdentifier(body) {
     return { identifier: undefined, identifier_type: undefined }
 }
 
+/**
+ * Reads the profile the frontend contract expects straight out of the id
+ * token, so returning a user alongside tokens costs no extra Cognito call.
+ * The token is already signed by Cognito and verified by the API Gateway
+ * authorizer on protected routes; here it is only being decoded.
+ */
+function userFromIdToken(id_token) {
+    const payload = id_token.split('.')[1]
+    const claims = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'))
+    const first_name = claims.given_name || ''
+    const last_name = claims.family_name || ''
+
+    return {
+        id: claims.sub,
+        firstName: first_name,
+        lastName: last_name,
+        name: [first_name, last_name].filter(Boolean).join(' '),
+        email: claims.email,
+        phone: claims.phone_number,
+    }
+}
+
 module.exports = {
     response,
     ok,
@@ -83,7 +93,7 @@ module.exports = {
     notFound,
     serverError,
     parseBody,
-    generateOtp,
     resolveIdentifier,
+    userFromIdToken,
     getHeader,
 }
