@@ -134,18 +134,51 @@ template. `CodeUri` in the template is `../` for that reason, which is also why 
 
 ```bash
 cd backend-code
-npm install          # handlers need the AWS SDK on disk
+npm install
 npm run deploy
 ```
 
-`npm run deploy` is the whole thing: it validates the template, builds, and deploys. On the first run
-there is no `samconfig.toml` yet, so it falls through to `sam deploy --guided` and prompts for the
-stack name, region and Cognito parameters, saving them for next time. Every later `npm run deploy`
-reuses those answers.
+That's it, on any machine, including a fresh clone. `samconfig.toml` is **committed**, so the stack
+name, region and Cognito parameters are already filled in — nothing to configure. The command
+validates the template, builds, shows you the resource diff, and waits for `y` before touching AWS.
 
-Use `npm run deploy:guided` when you want to change them again. `npm run build` and
-`npm run validate` are available on their own, and `npm run destroy` tears the stack down
-(`sam delete` — it asks for confirmation first, and takes the log groups with it).
+What you need first: the SAM CLI, and AWS credentials for the target account.
+
+### Changing the settings
+
+```bash
+npm run deploy:guided
+```
+
+Re-prompts for everything and rewrites `samconfig.toml`. Two things to check in the diff before
+committing what it wrote:
+
+- it saves `capabilities = "CAPABILITY_IAM"`, but this template needs `CAPABILITY_NAMED_IAM` because
+  the execution role has an explicit name. The npm scripts pass the right one on the command line, so
+  deploys still work — but fix the file anyway so it isn't misleading.
+- **never let `CognitoClientSecret` end up in there.** It is a real secret and that file is in git. If
+  the app client has one, pass it per-deploy instead:
+  `npm run build && sam deploy --parameter-overrides "$(existing overrides)" CognitoClientSecret=...`
+
+Note the guided prompt for `CognitoClientSecret` is a hidden `getpass` field — a paste doesn't echo,
+which looks like it failed. Press Enter to skip it; most app clients have no secret.
+
+### Deploying a second stack
+
+`samconfig.toml` points at one account, one pool, one stack. For a second environment, override just
+what differs and give it its own config env:
+
+```bash
+npm run build
+sam deploy --config-env staging --stack-name authplatform-staging-auth --save-params \
+  --capabilities CAPABILITY_NAMED_IAM --resolve-s3 \
+  --parameter-overrides Environment=staging \
+    CognitoUserPoolId=<pool> CognitoUserPoolArn=<arn> CognitoUserPoolClientId=<client> \
+    ManageApiGatewayAccount=false
+```
+
+`ManageApiGatewayAccount=false` for any stack after the first in a given account and region — only one
+can own that account-wide API Gateway logging role.
 
 Or drive SAM directly and pass everything explicitly:
 

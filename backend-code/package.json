@@ -8,8 +8,8 @@
     "test": "jest --coverage",
     "validate": "sam validate -t auth/template.yaml --lint",
     "build": "sam build -t auth/template.yaml --cached --parallel",
-    "deploy": "npm run validate && npm run build && if [ -f samconfig.toml ]; then sam deploy; else sam deploy --guided; fi",
-    "deploy:guided": "npm run validate && npm run build && sam deploy --guided",
+    "deploy": "npm run validate && npm run build && if [ -f samconfig.toml ]; then sam deploy --capabilities CAPABILITY_NAMED_IAM; else sam deploy --guided --capabilities CAPABILITY_NAMED_IAM; fi",
+    "deploy:guided": "npm run validate && npm run build && sam deploy --guided --capabilities CAPABILITY_NAMED_IAM",
     "destroy": "sam delete"
   },
   "dependencies": {

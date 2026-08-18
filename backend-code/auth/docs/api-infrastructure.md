@@ -15,8 +15,9 @@ backend-code/                   ← npm root: run every command from here
 ├── eslint.config.mjs
 ├── jest.config.js
 ├── .lintstagedrc.json
+├── samconfig.toml              committed: deploy settings, no secrets
 └── auth/
-    ├── template.yaml           the whole infrastructure — 15 functions, 16 log groups, 1 API, 1 IAM role
+    ├── template.yaml           the whole infrastructure — 12 functions, 13 log groups, 1 API, 1 IAM role
     ├── handlers/               one Lambda handler per route
     ├── lib/                    Cognito wrapper, JWT verification, response helpers
     ├── utils/                  older response helpers, used by the not-yet-implemented stubs
@@ -298,25 +299,28 @@ deliberately skips the changeset.
 Everything runs from `backend-code/`:
 
 ```bash
-cd backend-code
 npm run deploy
 ```
 
-That is the only command you need, first run and every run after. It chains
-`npm run validate` → `npm run build` → `sam deploy`, and on the first run — when there is no
-`samconfig.toml` yet — falls through to `sam deploy --guided`, which prompts for the stack name,
-region and Cognito parameters and saves them. Every later `npm run deploy` reuses those answers
-silently.
+One command, on any machine including a fresh clone — `samconfig.toml` is committed, so stack name,
+region and every Cognito parameter are already set. It validates, builds, prints the resource diff and
+waits for `y`.
 
 | Script | Does |
 |---|---|
-| `npm run deploy` | validate → build → deploy; guided on the first run only |
-| `npm run deploy:guided` | same, but always prompts — use it to change region, stack name or parameters |
+| `npm run deploy` | validate → build → deploy, using the committed `samconfig.toml` |
+| `npm run deploy:guided` | re-prompts for every setting and rewrites `samconfig.toml` — for *changing* things |
 | `npm run build` | `sam build -t auth/template.yaml --cached --parallel` |
 | `npm run validate` | `sam validate -t auth/template.yaml --lint` |
-| `npm run destroy` | `sam delete` — tears the stack down, with a y/N prompt. See *Tearing down* below |
+| `npm run destroy` | `sam delete`, with a y/N prompt. See *Tearing down* below |
 
-`samconfig.toml` is gitignored: `--guided` writes your pool ids into it.
+`samconfig.toml` is committed deliberately: a Cognito pool id and app client id are public
+identifiers that ship in the browser bundle anyway. **`CognitoClientSecret` must never go in it** —
+that one is a real secret, and the file is in git. Pass it per-deploy if the app client has one.
+
+Both deploy scripts pass `--capabilities CAPABILITY_NAMED_IAM` on the command line, which overrides
+the file. That is deliberate: the execution role has an explicit `RoleName`, so `CAPABILITY_IAM` is
+rejected, and `sam deploy --guided` saves exactly that wrong value.
 
 These are thin wrappers over plain SAM commands, so nothing stops you running them directly:
 
@@ -327,7 +331,7 @@ sam deploy
 
 `sam deploy` needs no `-t` — it deploys what `sam build` left in `.aws-sam/build`.
 
-Fully explicit, no saved config:
+Fully explicit, no saved config:Fully explicit, no saved config:
 
 ```bash
 sam deploy \
