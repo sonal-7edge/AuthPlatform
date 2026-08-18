@@ -12,7 +12,6 @@ const {
     AdminDeleteUserCommand,
     ForgotPasswordCommand,
     ConfirmForgotPasswordCommand,
-    SignUpCommand,
 } = require('@aws-sdk/client-cognito-identity-provider')
 
 const cognitoClient = new CognitoIdentityProviderClient({

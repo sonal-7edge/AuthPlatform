@@ -1,3 +1,4 @@
+const crypto = require('crypto')
 const Cognito = require('../lib/Cognito')
 const { withErrorHandling } = require('../lib/handlerWrapper')
 const { ok, badRequest, parseBody, resolveIdentifier } = require('../lib/helpers')
@@ -31,8 +32,12 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
 
     const cognito = deps.cognito || new Cognito()
 
+    // The pool has email/phone as alias attributes, not username attributes,
+    // so Cognito rejects an email- or phone-shaped Username on SignUp. Every
+    // other flow (verify-otp, signin, ...) keeps using `identifier` as the
+    // Username — Cognito resolves those through the alias once it exists.
     await cognito.signUp({
-        username: identifier,
+        username: crypto.randomUUID(),
         password: body.password,
         user_attributes: buildUserAttributes({
             first_name: body.firstName,
