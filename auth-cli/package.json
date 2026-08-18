@@ -1,5 +1,5 @@
 {
-  "name": "@akhileshb/auth-cli",
+  "name": "@7edge/auth-cli",
   "version": "1.0.0",
   "description": "Internal CLI tool for standardizing AWS Cognito resource provisioning",
   "main": "dist/index.js",

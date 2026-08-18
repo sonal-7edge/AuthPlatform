@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import chalk from 'chalk';
+import inquirer from 'inquirer';
 import { Command } from 'commander';
 import { runAuthPrompts } from '../prompts/authPrompts';
 import { ConfigService } from '../services/configService';
@@ -8,7 +9,8 @@ import { ConfigValidator } from '../validators/configValidator';
 import { generateCfnTemplate } from '../utils/cfnGenerator';
 import { cfnTemplateToAuthConfig, isCfnTemplate } from '../utils/cfnParser';
 import { logger } from '../utils/logger';
-import { CFN_OUTPUT_FILE, OUTPUT_FILE } from '../config/constants';
+import { hasAwsCredentialsInEnv, runDeploy } from './deployCommand';
+import { CFN_OUTPUT_FILE } from '../config/constants';
 import {
   DEFAULT_RESOURCE_DIR,
   ensureDirExists,
@@ -67,42 +69,19 @@ export function writeCfnOutput(config: AuthConfig, outputPath: string): void {
   logger.success(`CloudFormation template written to: ${chalk.bold(outputPath)}`);
   logger.divider();
   logger.info(
-    `Deploy with: ${chalk.gray(`aws cloudformation deploy --template-file ${path.basename(outputPath)} --stack-name ${config.poolName}`)}`,
+    `Deploy with: ${chalk.gray(`sam deploy --template-file ${path.basename(outputPath)} --stack-name ${config.poolName} --capabilities CAPABILITY_IAM --resolve-s3`)}`,
   );
 }
 
 export function registerGenerateCommand(program: Command): void {
   program
     .command('generate')
-    .description(
-      'Generate a CloudFormation template, interactively or from an existing auth-config.yaml or cognito-template.yaml',
-    )
-    .argument(
-      '[file]',
-      `Path to an existing ${OUTPUT_FILE} or generated CFN template to regenerate from (skips the wizard). If omitted, runs the wizard and generates the template directly — no config file is written. To add an app client to an existing file, use "add-client" instead.`,
-    )
+    .description('Generate a CloudFormation template by answering the setup wizard')
     .option(
       '-o, --output <file>',
       `Output path for the CloudFormation template (default: ${DEFAULT_RESOURCE_DIR}/${CFN_OUTPUT_FILE})`,
     )
-    .action(async (file: string | undefined, options: { output?: string }) => {
-      if (file) {
-        const { config, filePath, fromTemplate } = loadConfigFromFile(file);
-
-        // Regenerating from the template itself updates it in place by default;
-        // regenerating from an auth-config.yaml writes alongside it, never over it.
-        const outputPath = options.output
-          ? path.isAbsolute(options.output)
-            ? options.output
-            : resolveOutputPath(options.output)
-          : fromTemplate
-            ? filePath
-            : resolveOutputPath(CFN_OUTPUT_FILE, path.dirname(filePath));
-
-        writeCfnOutput(config, outputPath);
-        return;
-      }
-
+    .action(async (options: { output?: string }) => {
       const outputPath =
         options.output ?? resolveOutputPath(CFN_OUTPUT_FILE, resolveDefaultOutputDir());
 
@@ -124,5 +103,60 @@ export function registerGenerateCommand(program: Command): void {
       }
 
       writeCfnOutput(config, outputPath);
+
+      await promptDeploy(outputPath, config.poolName);
     });
+}
+
+async function promptDeploy(templatePath: string, defaultStackName: string): Promise<void> {
+  const { shouldDeploy } = await inquirer.prompt<{ shouldDeploy: boolean }>([
+    {
+      type: 'confirm',
+      name: 'shouldDeploy',
+      message: 'Deploy this stack now with `sam deploy`?',
+      default: false,
+    },
+  ]);
+
+  if (!shouldDeploy) return;
+
+  if (!hasAwsCredentialsInEnv()) {
+    logger.warn('No AWS credentials detected in this shell. Export them first, e.g.:');
+    logger.list([
+      'export AWS_ACCESS_KEY_ID=...',
+      'export AWS_SECRET_ACCESS_KEY=...',
+      'export AWS_SESSION_TOKEN=...   # only if using temporary/SSO credentials',
+    ]);
+  }
+
+  const { stackName, profile, ready } = await inquirer.prompt<{
+    stackName: string;
+    profile: string;
+    ready: boolean;
+  }>([
+    {
+      type: 'input',
+      name: 'stackName',
+      message: 'Stack name:',
+      default: defaultStackName,
+    },
+    {
+      type: 'input',
+      name: 'profile',
+      message: 'AWS CLI profile (leave blank to use exported credentials):',
+    },
+    {
+      type: 'confirm',
+      name: 'ready',
+      message: 'Credentials are exported and ready — continue with deployment?',
+      default: false,
+    },
+  ]);
+
+  if (!ready) {
+    logger.info('Deployment skipped.');
+    return;
+  }
+
+  await runDeploy(templatePath, { stackName, profile: profile || undefined });
 }

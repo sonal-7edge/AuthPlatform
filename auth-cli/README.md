@@ -17,6 +17,22 @@ npm install -g .
 
 After global install the `auth` binary is available system-wide.
 
+### Prerequisites for deploying
+
+`auth generate` and `auth deploy` shell out to the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) (`sam deploy`), not the plain AWS CLI. Install it separately and confirm it's on your `PATH`:
+
+```bash
+sam --version
+```
+
+Before deploying, export AWS credentials into the same terminal session (or set `AWS_PROFILE` / pass `--profile`):
+
+```bash
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_SESSION_TOKEN=...   # only if using temporary/SSO credentials
+```
+
 ---
 
 ## Usage
@@ -44,17 +60,27 @@ auth init
 auth init --output ./config
 ```
 
-### `auth generate [file]`
+### `auth generate`
 
-Reads `auth-config.yaml` (or a path you specify), validates it, and generates a CloudFormation template for the Cognito User Pool, its app clients, and any Lambda triggers.
+Runs the interactive wizard and generates a CloudFormation template for the Cognito User Pool, its app clients, and any Lambda triggers — no `auth-config.yaml` is written.
 
 ```bash
 auth generate
-auth generate ./config/auth-config.yaml
 auth generate --output ./infra/cognito-template.yaml
 ```
 
-Exits with code `1` and prints validation errors if the config file is invalid.
+Exits with code `1` and prints validation errors if the answers fail validation.
+
+Once the template is written, you're asked whether to deploy it immediately. Answering yes prompts for a stack name and optional AWS profile, warns if no AWS credentials are exported in the current shell, and — after a final confirmation — runs `sam deploy` for you. Answering no just leaves the template on disk to deploy later with `auth deploy`.
+
+### `auth deploy <file>`
+
+Deploys a generated `cognito-template.yaml` with `sam deploy`. Requires AWS credentials exported in the shell (or `--profile`/`AWS_PROFILE`) and the AWS SAM CLI installed.
+
+```bash
+auth deploy ./resources/auth/cognito-template.yaml --stack-name my-app-users
+auth deploy ./resources/auth/cognito-template.yaml -s my-app-users -p my-profile -r us-east-1
+```
 
 ### `auth validate [file]`
 
@@ -200,8 +226,9 @@ npm run test:coverage
 auth-cli/
 ├── src/
 │   ├── commands/         # Commander.js command registrations
-│   │   ├── initCommand.ts
 │   │   ├── generateCommand.ts
+│   │   ├── addClientCommand.ts
+│   │   ├── deployCommand.ts
 │   │   └── validateCommand.ts
 │   ├── prompts/          # Inquirer.js prompt definitions
 │   │   └── authPrompts.ts

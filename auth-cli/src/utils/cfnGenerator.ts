@@ -148,7 +148,7 @@ Resources:
           RequireNumbers: ${passwordPolicy.requireNumbers}
           RequireSymbols: ${passwordPolicy.requireSymbols}
           TemporaryPasswordValidityDays: ${passwordPolicy.tempPasswordDays}
-      MfaConfiguration: ${mfaConfig}${enabledMfas}${smsConfig}
+      MfaConfiguration: '${mfaConfig}'${enabledMfas}${smsConfig}
       AccountRecoverySetting:
         RecoveryMechanisms:${recoveryMechanisms
           .map((m) => `\n          - Name: ${m.name}\n            Priority: ${m.priority}`)
