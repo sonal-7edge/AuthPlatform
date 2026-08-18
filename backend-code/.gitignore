@@ -1,0 +1,9 @@
+# sam build output — matches auth/.aws-sam too
+.aws-sam/
+
+# sam deploy --guided writes this, and it holds your pool ids
+samconfig.toml
+
+node_modules
+coverage
+.env

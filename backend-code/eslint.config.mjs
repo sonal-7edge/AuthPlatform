@@ -3,7 +3,7 @@ import globals from 'globals'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['node_modules']),
+  globalIgnores(['node_modules', 'coverage', '.aws-sam']),
   {
     files: ['**/*.js'],
     extends: [js.configs.recommended],
@@ -11,6 +11,12 @@ export default defineConfig([
       ecmaVersion: 'latest',
       sourceType: 'commonjs',
       globals: globals.node,
+    },
+  },
+  {
+    files: ['**/__tests__/**/*.js'],
+    languageOptions: {
+      globals: globals.jest,
     },
   },
 ])

@@ -1,0 +1,472 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AuthPlatform Auth APIs",
+    "description": "Reusable AWS Lambda auth endpoints (Sign Up, Sign In, OTP, Forgot/Change Password, Logout, Token Refresh) backed by Amazon Cognito custom-auth challenges. See backend-code/auth/README.md for the full design notes.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://{apiId}.execute-api.{region}.amazonaws.com/{stage}",
+      "description": "API Gateway stage fronting these Lambdas (replace variables with your deployment)",
+      "variables": {
+        "apiId": { "default": "your-api-id" },
+        "region": { "default": "us-east-1" },
+        "stage": { "default": "dev" }
+      }
+    }
+  ],
+  "tags": [
+    { "name": "Sign Up & Sign In", "description": "Account creation and the CUSTOM_AUTH password+OTP sign-in chain" },
+    { "name": "OTP", "description": "Completing and resending the one-time-passcode round of the auth chain" },
+    { "name": "Password Reset", "description": "Forgot-password flow, using Cognito's native code delivery" },
+    { "name": "Account", "description": "Authenticated account actions requiring a Bearer idToken" },
+    { "name": "Session", "description": "Session lifecycle: refresh and logout" }
+  ],
+  "paths": {
+    "/auth/signup": {
+      "post": {
+        "tags": ["Sign Up & Sign In"],
+        "summary": "Create an account and start the OTP challenge",
+        "description": "Creates the Cognito user (SignUpCommand), confirms it server-side (AdminConfirmSignUp) so Cognito's own confirmation code is never sent, then feeds straight into the same OTP round POST /auth/signin uses. POST /auth/verify-otp is the single completion point for both signup and signin.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SignUpRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP sent to the new account's registered contact",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/signin": {
+      "post": {
+        "tags": ["Sign Up & Sign In"],
+        "summary": "Verify the password and start the OTP challenge",
+        "description": "Round 1 (password) of the CUSTOM_AUTH chain is verified and answered server-side; the client never sees it. On success, round 2 (OTP) is kicked off and its Cognito session is stashed server-side, keyed by identifier, for POST /auth/verify-otp to complete.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SignInRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP sent to the account's registered contact",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/verify-otp": {
+      "post": {
+        "tags": ["OTP"],
+        "summary": "Complete round 2 (OTP) of sign-up/sign-in and receive tokens",
+        "description": "Answers the pending OTP challenge started by POST /auth/signup or POST /auth/signin. On the correct code, Cognito issues tokens in the same call. On an incorrect code (up to MAX_OTP_ATTEMPTS = 3 total), a fresh code is sent automatically and the pending session is refreshed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VerifyOtpRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP correct — tokens issued",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VerifyOtpResponse" } } }
+          },
+          "400": {
+            "description": "Incorrect/expired code, malformed request, or no pending verification for this identifier",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/resend-otp": {
+      "post": {
+        "tags": ["OTP"],
+        "summary": "Resend the OTP for a pending sign-up/sign-in challenge",
+        "description": "There is no dedicated \"resend\" primitive in the CUSTOM_AUTH chain — every wrong answer to the OTP round makes Cognito issue a fresh code. This endpoint reuses that by submitting an answer that can never match, at the cost of one of the MAX_OTP_ATTEMPTS retries.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResendOtpRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A fresh OTP was sent",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": {
+            "description": "Malformed request, or no pending verification for this identifier",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "tags": ["Password Reset"],
+        "summary": "Start the forgot-password flow",
+        "description": "Kicks off Cognito's native ForgotPassword flow. Unlike sign-in/sign-up, there is no password to verify first, so this uses Cognito's own confirmation-code delivery (SES/SNS as configured on the pool) rather than the CUSTOM_AUTH OTP chain.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ForgotPasswordRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reset code sent",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/verify-reset-otp": {
+      "post": {
+        "tags": ["Password Reset"],
+        "summary": "Verify the forgot-password reset code",
+        "description": "Cognito's ConfirmForgotPassword needs the new password at the same time as the code, but this contract splits \"verify code\" and \"set new password\" into two calls. This endpoint confirms with a throwaway random password (spending the code and proving it was correct) and returns a short-lived signed resetToken (default TTL 600s) for POST /auth/reset-password to redeem.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VerifyResetOtpRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Code verified — resetToken issued",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VerifyResetOtpResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "tags": ["Password Reset"],
+        "summary": "Set a new password using a verified resetToken",
+        "description": "Redeems the resetToken issued by POST /auth/verify-reset-otp and sets the real new password via AdminSetUserPassword (permanent — no FORCE_CHANGE_PASSWORD status).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResetPasswordRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password reset successfully",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": {
+            "description": "resetToken is missing, malformed, expired, or has an invalid signature",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/change-password": {
+      "post": {
+        "tags": ["Account"],
+        "summary": "Change the password of the signed-in user",
+        "description": "The caller only ever holds an idToken, never an accessToken, so Cognito's own ChangePassword API (which requires an access token) isn't usable here. currentPassword is re-verified via AdminInitiateAuth(ADMIN_USER_PASSWORD_AUTH) — the same check round 1 of sign-in uses — before AdminSetUserPassword sets newPassword.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed successfully",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/delete-account": {
+      "post": {
+        "tags": ["Account"],
+        "summary": "Delete the signed-in user's account",
+        "description": "Re-verifies password (AdminInitiateAuth ADMIN_USER_PASSWORD_AUTH) before calling AdminDeleteUser — deletion is irreversible, so a stolen idToken alone isn't enough.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DeleteAccountRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account deleted successfully",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": ["Session"],
+        "summary": "Exchange a refresh token for a new idToken",
+        "description": "Only works out of the box when the app client has no client secret configured — SECRET_HASH can't be computed from a bare refresh token otherwise. Cognito refresh tokens don't rotate by default, so the same refreshToken is echoed back unless the pool has rotation enabled.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RefreshTokenRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New idToken issued",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshTokenResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": ["Session"],
+        "summary": "Sign out and revoke every refresh token for this user",
+        "description": "Calls AdminUserGlobalSignOut so logout invalidates the session server-side, instead of only discarding tokens client-side.",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Signed out",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/tokens": {
+      "post": {
+        "tags": ["Session"],
+        "summary": "Not implemented",
+        "description": "Deliberately unimplemented. Minting tokens from an email alone with no proof of identity would be a security hole; always returns 501. See backend-code/auth/README.md.",
+        "deprecated": true,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "email": { "type": "string", "format": "email" } } }
+            }
+          }
+        },
+        "responses": {
+          "501": {
+            "description": "Not implemented",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "apiKey",
+        "name": "Authorization",
+        "in": "header",
+        "description": "Pass as `Bearer <idToken>` — the idToken returned by /auth/verify-otp"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Missing/invalid fields, or a rejected Cognito operation (e.g. weak password, code mismatch)",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing/expired/invalid bearer token, or incorrect credentials",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "NotFound": {
+        "description": "No user exists for the given identifier",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "ServerError": {
+        "description": "Unhandled error",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "SignUpRequest": {
+        "type": "object",
+        "required": ["firstName", "lastName", "password"],
+        "description": "Exactly one of email or phone is required",
+        "properties": {
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "phone": { "type": "string", "example": "+15551234567" },
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "SignInRequest": {
+        "type": "object",
+        "required": ["password"],
+        "description": "Exactly one of email or phone is required",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "phone": { "type": "string", "example": "+15551234567" },
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "VerifyOtpRequest": {
+        "type": "object",
+        "required": ["identifier", "otp"],
+        "properties": {
+          "identifier": { "type": "string", "description": "The email or phone used to sign up/in" },
+          "otp": { "type": "string", "example": "123456" }
+        }
+      },
+      "VerifyOtpResponse": {
+        "type": "object",
+        "properties": {
+          "idToken": { "type": "string" },
+          "refreshToken": { "type": "string" },
+          "user": { "$ref": "#/components/schemas/User" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "phone": { "type": "string" }
+        }
+      },
+      "ResendOtpRequest": {
+        "type": "object",
+        "required": ["identifier"],
+        "properties": {
+          "identifier": { "type": "string" }
+        }
+      },
+      "ForgotPasswordRequest": {
+        "type": "object",
+        "description": "Exactly one of email or phone is required",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "phone": { "type": "string", "example": "+15551234567" }
+        }
+      },
+      "VerifyResetOtpRequest": {
+        "type": "object",
+        "required": ["identifier", "otp"],
+        "properties": {
+          "identifier": { "type": "string" },
+          "otp": { "type": "string", "example": "123456" }
+        }
+      },
+      "VerifyResetOtpResponse": {
+        "type": "object",
+        "properties": {
+          "resetToken": { "type": "string" }
+        }
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "required": ["resetToken", "newPassword"],
+        "properties": {
+          "resetToken": { "type": "string" },
+          "newPassword": { "type": "string", "format": "password" }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": ["currentPassword", "newPassword"],
+        "properties": {
+          "currentPassword": { "type": "string", "format": "password" },
+          "newPassword": { "type": "string", "format": "password" }
+        }
+      },
+      "DeleteAccountRequest": {
+        "type": "object",
+        "required": ["password"],
+        "properties": {
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "RefreshTokenRequest": {
+        "type": "object",
+        "required": ["refreshToken"],
+        "properties": {
+          "refreshToken": { "type": "string" }
+        }
+      },
+      "RefreshTokenResponse": {
+        "type": "object",
+        "properties": {
+          "idToken": { "type": "string" },
+          "refreshToken": { "type": "string" }
+        }
+      }
+    }
+  }
+}
