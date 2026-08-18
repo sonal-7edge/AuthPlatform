@@ -17,8 +17,8 @@ backend-code/                   ← npm root: run every command from here
 ├── .lintstagedrc.json
 └── auth/
     ├── template.yaml           the whole infrastructure — 15 functions, 16 log groups, 1 API, 1 IAM role
-    ├── handlers/               one Lambda handler per route / Cognito trigger
-    ├── lib/                    Cognito wrapper, OTP notifier, JWT verification, response helpers
+    ├── handlers/               one Lambda handler per route
+    ├── lib/                    Cognito wrapper, JWT verification, response helpers
     ├── utils/                  older response helpers, used by the not-yet-implemented stubs
     ├── docs/                   this file
     └── README.md
@@ -36,8 +36,9 @@ cd backend-code
 sam build -t auth/template.yaml --cached --parallel
 ```
 
-Only the SAM CLI is needed to deploy. `sam build` uses your local Node 20 toolchain by default; add
-`--use-container` if you need artifacts built against Amazon Linux exactly (requires Docker).
+Only the SAM CLI is needed to deploy. The functions run on `nodejs24.x`; `sam build` uses your local
+npm to install dependencies, so a local Node older than 24 is fine for these pure-JS packages. Add
+`--use-container` if you want artifacts built against the real runtime image (requires Docker).
 
 ---
 
@@ -52,7 +53,7 @@ Only the SAM CLI is needed to deploy. `sam build` uses your local Node 20 toolch
                                          │
                                          ▼
                          ┌──────────────────────────────┐
-                         │  <Name>Function              │  arm64, Node 20, 256 MB, 15 s
+                         │  <Name>Function              │  arm64, nodejs24.x, 256 MB, 15 s
                          │  authplatform-dev-signup     │
                          └───────────────┬──────────────┘
                                          │
@@ -62,14 +63,11 @@ Only the SAM CLI is needed to deploy. `sam build` uses your local Node 20 toolch
                          └──────────────────────────────┘
 ```
 
-The three Cognito triggers are the same Function + LogGroup pair with **no `Events` block** — the
-user pool invokes them directly, which the `AWS::Lambda::Permission` beside each one allows.
-
 | Route | Handler | Auth | Status |
 |---|---|---|---|
-| `POST /auth/signup` | `handlers/sign_up.js` | public | implemented |
-| `POST /auth/signin` | `handlers/sign_in.js` | public | implemented |
-| `POST /auth/verify-otp` | `handlers/verify_otp.js` | public | implemented |
+| `POST /auth/signup` | `handlers/sign_up.js` | public | implemented — Cognito emails the code |
+| `POST /auth/verify-otp` | `handlers/verify_otp.js` | public | implemented — `ConfirmSignUp` |
+| `POST /auth/signin` | `handlers/sign_in.js` | public | implemented — returns tokens directly |
 | `POST /auth/refresh` | `handlers/refresh_token.js` | public | implemented |
 | `POST /auth/logout` | `handlers/logout.js` | cognito | implemented |
 | `POST /auth/tokens` | `handlers/tokens.js` | public | 501 by design |
@@ -80,16 +78,11 @@ user pool invokes them directly, which the `AWS::Lambda::Permission` beside each
 | `POST /auth/change-password` | `handlers/change-password.js` | cognito | 501 stub |
 | `POST /auth/delete-account` | `handlers/delete-account.js` | cognito | 501 stub |
 
-| Cognito trigger | Handler |
-|---|---|
-| `DefineAuthChallenge` | `handlers/define_auth_challenge.js` |
-| `CreateAuthChallenge` | `handlers/create_auth_challenge.js` |
-| `VerifyAuthChallengeResponse` | `handlers/verify_auth_challenge_response.js` |
+The snake_case handler filenames are historical; the kebab-case 501 scaffolds that used to sit
+alongside them have been deleted.
 
-The four snake_case handlers are deliberate: the implemented code lives in `sign_up.js`,
-`sign_in.js`, `verify_otp.js` and `refresh_token.js`, while `signup.js`, `signin.js`,
-`verify-otp.js` and `refresh.js` are older 501 scaffolds the template no longer points at. They are
-dead code and safe to delete.
+There are no Cognito trigger functions. Verification codes are sent by Cognito itself, so the stack
+needs no SES or SNS permissions and nothing has to be wired into the pool's `LambdaConfig`.
 
 Once per stack: the shared `LambdaExecutionRole`, the API access log group, two
 `AWS::ApiGateway::GatewayResponse` resources (so 4XX/5XX raised by API Gateway itself still carry
@@ -157,19 +150,15 @@ Exactly five values change between blocks:
 | `Handler` | `auth/handlers/my-thing.handler` — note the `auth/` prefix |
 | `Path` | `/auth/my-thing` |
 
-Runtime, architecture, memory, timeout, IAM role, tracing and every environment variable come from
+Runtime, architecture, memory, timeout, IAM role and every environment variable come from
 `Globals` at the top of the template. A new endpoint repeats none of it.
 
 ### Step 3 — deploy
 
 ```bash
 cd backend-code
-sam validate -t auth/template.yaml --lint
-sam build -t auth/template.yaml --cached --parallel
-sam deploy
+npm run deploy
 ```
-
-`sam deploy` needs no `-t`: it deploys what `sam build` left in `.aws-sam/build`.
 
 ### Variations
 
@@ -203,7 +192,8 @@ response advertises only what's listed there.
 
 **Path parameter** — `Path: /auth/user/{id}`, read as `event.pathParameters.id`.
 
-**A new Cognito trigger** — same as a route, but drop the whole `Events` block and add a permission:
+**A Cognito trigger** (none today) — same as a route, but drop the whole `Events` block and add a
+permission so the pool may invoke it, then set its ARN in the pool's `LambdaConfig`:
 
 ```yaml
   MyTriggerPermission:
@@ -214,8 +204,6 @@ response advertises only what's listed there.
       Principal: cognito-idp.amazonaws.com
       SourceArn: !Ref CognitoUserPoolArn
 ```
-
-Then attach it to the pool's LambdaConfig — see §5.
 
 ### The two mistakes `--lint` won't catch
 
@@ -245,8 +233,6 @@ cat > /tmp/auth-env.json <<'EOF'
     "COGNITO_USER_POOL_ID": "ap-south-1_AbCdEf123",
     "COGNITO_CLIENT_ID": "1h57kf5cpq17m0eml12EXAMPLE",
     "COGNITO_CLIENT_SECRET": "",
-    "SES_FROM_EMAIL": "no-reply@example.com",
-    "OTP_TTL_SECONDS": "300",
     "CORS_ALLOW_ORIGIN": "*",
     "LOG_LEVEL": "debug"
   }
@@ -313,13 +299,33 @@ Everything runs from `backend-code/`:
 
 ```bash
 cd backend-code
-sam validate -t auth/template.yaml --lint
-sam build -t auth/template.yaml --cached --parallel
-sam deploy --guided          # first time: prompts, then saves to samconfig.toml
+npm run deploy
 ```
 
-`samconfig.toml` is gitignored because `--guided` writes your pool ids into it. After that first run,
-redeploys are just `sam build -t auth/template.yaml --cached --parallel && sam deploy`.
+That is the only command you need, first run and every run after. It chains
+`npm run validate` → `npm run build` → `sam deploy`, and on the first run — when there is no
+`samconfig.toml` yet — falls through to `sam deploy --guided`, which prompts for the stack name,
+region and Cognito parameters and saves them. Every later `npm run deploy` reuses those answers
+silently.
+
+| Script | Does |
+|---|---|
+| `npm run deploy` | validate → build → deploy; guided on the first run only |
+| `npm run deploy:guided` | same, but always prompts — use it to change region, stack name or parameters |
+| `npm run build` | `sam build -t auth/template.yaml --cached --parallel` |
+| `npm run validate` | `sam validate -t auth/template.yaml --lint` |
+| `npm run destroy` | `sam delete` — tears the stack down, with a y/N prompt. See *Tearing down* below |
+
+`samconfig.toml` is gitignored: `--guided` writes your pool ids into it.
+
+These are thin wrappers over plain SAM commands, so nothing stops you running them directly:
+
+```bash
+sam build -t auth/template.yaml --cached --parallel
+sam deploy
+```
+
+`sam deploy` needs no `-t` — it deploys what `sam build` left in `.aws-sam/build`.
 
 Fully explicit, no saved config:
 
@@ -335,8 +341,7 @@ sam deploy \
     Environment=dev \
     CognitoUserPoolId=ap-south-1_AbCdEf123 \
     CognitoUserPoolArn=arn:aws:cognito-idp:ap-south-1:111122223333:userpool/ap-south-1_AbCdEf123 \
-    CognitoUserPoolClientId=1h57kf5cpq17m0eml12EXAMPLE \
-    SesFromEmail=no-reply@example.com
+    CognitoUserPoolClientId=1h57kf5cpq17m0eml12EXAMPLE
 ```
 
 `--resolve-s3` lets SAM create and reuse its own artifact bucket; swap in
@@ -369,50 +374,58 @@ ever set it, the stage's access logging fails at create time. Check:
 aws apigateway get-account --region ap-south-1 --query cloudwatchRoleArn
 ```
 
-If that returns `None` or empty, add `ManageApiGatewayAccount=true` to the parameter overrides for
-the first deploy so this stack creates the role. Leave it at the default `false` afterwards, and in
-any account where another stack already owns it.
+If that returns `None` or empty, set `ManageApiGatewayAccount=true` and **leave it true**. This stack
+then owns the role permanently.
 
-### Attaching the Cognito triggers
+Do not flip it back to `false` after a successful deploy: that deletes `ApiGatewayCloudWatchRole`,
+while the account-level setting keeps pointing at the now-deleted role — so access logging breaks
+again, and less obviously than the first time. `false` is only for accounts where a *different* stack
+already owns the role.
 
-The stack creates the three trigger functions and grants the pool permission to invoke them, but it
-does **not** modify the pool. That's deliberate: `update-user-pool` is a full replace, so calling it
-with only `--lambda-config` silently wipes every other pool setting — password policy, MFA, schema.
+### What the pool itself needs
 
-Get the ARNs:
+Nothing in this stack modifies your user pool, but the pool has to be set up for this flow:
+
+- `AutoVerifiedAttributes` includes `email` — **this is what makes Cognito send the code.** Without
+  it, `SignUp` succeeds and no email is ever sent, which looks identical to a broken email setup.
+- Explicit auth flows include `ALLOW_ADMIN_USER_PASSWORD_AUTH` (sign-in) and
+  `ALLOW_REFRESH_TOKEN_AUTH` (refresh).
+- Email sending: the default `COGNITO_DEFAULT` sender needs no setup and is capped at 50
+  messages/day. Phone codes instead need the pool's own SMS configuration.
 
 ```bash
-aws cloudformation describe-stacks --stack-name authplatform-dev-auth \
-  --query 'Stacks[0].Outputs[?OutputKey==`LambdaConfigForUserPool`].OutputValue' --output text
+aws cognito-idp describe-user-pool --user-pool-id <pool> --region <region> \
+  --query 'UserPool.{autoVerified:AutoVerifiedAttributes,email:EmailConfiguration}'
 ```
-
-Then either set the three triggers in the Cognito console (simplest, and safe), or merge that JSON
-into `describe-user-pool`'s output before calling `update-user-pool`.
-
-**Until they're attached, `CUSTOM_AUTH` sign-in cannot work** — signup, signin and verify-otp all
-fail. The pool also needs the explicit auth flows `ALLOW_CUSTOM_AUTH`,
-`ALLOW_ADMIN_USER_PASSWORD_AUTH` and `ALLOW_REFRESH_TOKEN_AUTH`.
 
 ### Tearing down
 
 ```bash
-sam delete --stack-name authplatform-dev-auth
+npm run destroy
 ```
 
-This deletes the log groups too — see §6.
+`sam delete` picks the stack name and region out of `samconfig.toml` — the same file
+`npm run deploy` wrote — and asks before doing anything:
+
+```
+Are you sure you want to delete the stack authplatform-dev-auth in the region ap-south-1 ? [y/N]:
+```
+
+It defaults to **N**, and the prompt is deliberately left in place: no `--no-prompts` here. With no
+`samconfig.toml` it asks for the stack name instead. To target a different stack, go direct:
+
+```bash
+sam delete --stack-name authplatform-staging-auth --region ap-south-1
+```
+
+This removes the functions, the API, the IAM role, **and the log groups** — `DeletionPolicy` on them
+is `Delete`, so deployed logs go with the stack (see §6). It also cleans up the build artifacts SAM
+uploaded to S3. What it does *not* touch is your Cognito user pool: nothing in this stack ever
+modified it, so the pool and its users survive a teardown untouched.
 
 ---
 
 ## 6. Things that will bite you
-
-**The pending-OTP store is in-memory, and the handlers are separate functions.**
-`lib/challengeSessionStore.js` holds the Cognito `Session` string between `/auth/signin` (which
-starts the challenge) and `/auth/verify-otp` (which completes it) in a module-level `Map`. Those are
-two different Lambda functions in two different containers, so `verify-otp` never sees what `signin`
-wrote and always answers *"No pending verification for this identifier"*. This is an application gap
-that predates the template, not a deployment problem. The flow needs a shared store — a DynamoDB
-table with a TTL attribute is the natural fit, and the store's `{get, set, delete}` shape is already
-designed for the swap.
 
 **Required headers are not enforced at the edge.** `AWS::Serverless::Api` exposes no
 request-validator property, so validate in the handler. An earlier raw-CloudFormation version of this
@@ -441,8 +454,18 @@ second service under `backend-code/` would put its code in these functions too. 
 size. If it ever matters, switch the functions to `Metadata: { BuildMethod: esbuild }`, which bundles
 only what each handler actually imports.
 
-**`sam build` runs once per function.** All fifteen share one `CodeUri`, so without `--cached` SAM
-repeats the same `npm install` fifteen times. Always pass `--cached --parallel`.
+**All twelve functions share one build.** Because they share a `CodeUri`, SAM groups them and runs
+the Node builder once, then fans the result out — the build log reads
+`Building codeuri: .../backend-code ... functions: SignupFunction, SigninFunction, ...`. `--cached`
+skips even that when `package.json` hasn't changed since the last build.
+
+**Each artifact is ~20 MB, and there are twelve of them.** That is the
+bundled AWS SDK: `@aws-sdk/client-cognito-identity-provider` is a runtime dependency, so every
+function carries its own copy. Well inside Lambda's 250 MB
+unzipped limit, but it slows uploads. The Lambda Node runtime already ships AWS SDK v3, so moving
+those three to `devDependencies` would shrink each artifact to a few hundred KB — at the cost of
+running against whatever SDK version the runtime happens to have. `aws-jwt-verify` must stay a real
+dependency either way; the runtime does not provide it.
 
 ---
 
@@ -454,16 +477,13 @@ repeats the same `npm install` fifteen times. Always pass `--cached --parallel`.
 | `Environment` | `dev` | `dev` \| `staging` \| `prod`. |
 | `ApiStageName` | `v1` | First path segment of the invoke URL. |
 | `CognitoUserPoolId` | *required* | Reaches handlers as `COGNITO_USER_POOL_ID`. |
-| `CognitoUserPoolArn` | *required* | Used twice: the API's Cognito authorizer, and the triggers' invoke permissions. |
+| `CognitoUserPoolArn` | *required* | The API's Cognito authorizer, and the IAM resource scope. |
 | `CognitoUserPoolClientId` | *required* | Reaches handlers as `COGNITO_CLIENT_ID`. |
 | `CognitoClientSecret` | `''` | `NoEcho`. The literal secret — `lib/Cognito.js` computes `SECRET_HASH` from it, so an ARN would not do. Empty for a public app client. |
-| `SesFromEmail` | `''` | Verified SES sender. Email OTPs fail without it. |
-| `OtpTtlSeconds` | `300` | `OTP_TTL_SECONDS`. |
 | `CorsAllowOrigin` | `*` | See §6. |
 | `LogRetentionInDays` | `30` | Every log group in the stack. |
 | `LogLevel` | `info` | `LOG_LEVEL` on every function. |
 | `ThrottlingRateLimit` / `ThrottlingBurstLimit` | 50 / 100 | Per method. |
-| `EnableXRayTracing` | `true` | Active tracing plus the matching IAM grants. |
 | `ManageApiGatewayAccount` | `false` | See §5. |
 
 ### Outputs
@@ -476,7 +496,6 @@ repeats the same `npm install` fifteen times. Always pass `--cached --parallel`.
 | `LambdaExecutionRoleArn` | Cross-stack reference. |
 | `ApiAccessLogGroupName` | Where the stage's access logs land. |
 | `UsingClientSecret` | `yes`/`no` — quick check that `SECRET_HASH` will be computed. |
-| `LambdaConfigForUserPool` | The trigger ARNs to attach to the pool. See §5. |
 
 `ApiInvokeUrl`, `RestApiId` and `LambdaExecutionRoleArn` are exported for `Fn::ImportValue`.
 
@@ -494,8 +513,6 @@ Set once in `Globals.Function.Environment.Variables`, so every function gets all
 | `COGNITO_USER_POOL_ID` | `CognitoUserPoolId` | `lib/Cognito.js`, `lib/verifyIdToken.js` |
 | `COGNITO_CLIENT_ID` | `CognitoUserPoolClientId` | `lib/Cognito.js`, `lib/verifyIdToken.js` |
 | `COGNITO_CLIENT_SECRET` | `CognitoClientSecret` | `lib/Cognito.js` (`SECRET_HASH`) |
-| `SES_FROM_EMAIL` | `SesFromEmail` | `lib/notifier.js` |
-| `OTP_TTL_SECONDS` | `OtpTtlSeconds` | `lib/otpChallenge.js`, `handlers/verify_otp.js` |
 | `CORS_ALLOW_ORIGIN` | `CorsAllowOrigin` | `utils/helpers.js` |
 | `LOG_LEVEL`, `PROJECT_NAME`, `ENVIRONMENT` | matching parameters | — |
 | `NODE_OPTIONS` | literal `--enable-source-maps` | — |

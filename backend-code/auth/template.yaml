@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  AuthPlatform auth API — one Lambda + CloudWatch log group per handler,
-  an API Gateway REST API in front of the routed ones, and the three
-  Cognito CUSTOM_AUTH trigger functions.
+  AuthPlatform auth API — one Lambda + CloudWatch log group per route, behind
+  an API Gateway REST API. Verification codes are sent by Cognito itself, so
+  this stack needs no SES or SNS access.
 
 # ===========================================================================
 # HOW TO ADD AN ENDPOINT
@@ -32,6 +32,15 @@ Description: >-
 # ===========================================================================
 
 Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        # AWS::Serverless::Api generates the OpenAPI Body, so cfn-lint warns
+        # that the two GatewayResponse resources also touch this REST API.
+        # They are deliberate — SAM exposes no GatewayResponses property, and
+        # without them a 401/429 from API Gateway itself reaches the browser
+        # with no CORS headers, as an opaque network error.
+        - W3660
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: Naming }
@@ -42,8 +51,6 @@ Metadata:
           - CognitoUserPoolArn
           - CognitoUserPoolClientId
           - CognitoClientSecret
-      - Label: { default: OTP delivery }
-        Parameters: [SesFromEmail, OtpTtlSeconds]
       - Label: { default: Observability & limits }
         Parameters:
           - CorsAllowOrigin
@@ -51,7 +58,6 @@ Metadata:
           - LogLevel
           - ThrottlingRateLimit
           - ThrottlingBurstLimit
-          - EnableXRayTracing
           - ManageApiGatewayAccount
 
 Parameters:
@@ -80,9 +86,7 @@ Parameters:
   CognitoUserPoolArn:
     Type: String
     AllowedPattern: "^arn:aws[a-zA-Z-]*:cognito-idp:.+$"
-    Description: >-
-      Same pool as an ARN. Needed twice: the API's Cognito authorizer, and the
-      permission that lets the pool invoke the trigger functions.
+    Description: Same pool as an ARN, for the API's Cognito authorizer.
 
   CognitoUserPoolClientId:
     Type: String
@@ -95,18 +99,6 @@ Parameters:
     Default: ""
     NoEcho: true
     Description: App client secret, if the client has one. Empty for a public client.
-
-  SesFromEmail:
-    Type: String
-    Default: ""
-    Description: Verified SES sender for OTP emails. Email OTPs fail without it.
-
-  OtpTtlSeconds:
-    Type: Number
-    Default: 300
-    MinValue: 60
-    MaxValue: 3600
-    Description: How long an issued OTP stays valid.
 
   CorsAllowOrigin:
     Type: String
@@ -135,12 +127,6 @@ Parameters:
     Default: 100
     Description: Burst capacity per method.
 
-  EnableXRayTracing:
-    Type: String
-    Default: "true"
-    AllowedValues: ["true", "false"]
-    Description: Active tracing on the API stage and every function.
-
   ManageApiGatewayAccount:
     Type: String
     Default: "false"
@@ -151,7 +137,6 @@ Parameters:
 
 Conditions:
   HasClientSecret: !Not [!Equals [!Ref CognitoClientSecret, ""]]
-  XRayEnabled: !Equals [!Ref EnableXRayTracing, "true"]
   ManageApiGatewayAccountSetting: !Equals [!Ref ManageApiGatewayAccount, "true"]
 
 # ---------------------------------------------------------------------------
@@ -159,15 +144,13 @@ Conditions:
 # ---------------------------------------------------------------------------
 Globals:
   Function:
-    Runtime: nodejs20.x
+    Runtime: nodejs24.x
     Architectures: [arm64]
     # backend-code/ — sam copies it and installs the production dependencies
     # from backend-code/package.json. Handlers are therefore auth/handlers/*.
     CodeUri: ../
     MemorySize: 256
     Timeout: 15
-    Role: !GetAtt LambdaExecutionRole.Arn
-    Tracing: !If [XRayEnabled, Active, PassThrough]
     Environment:
       Variables:
         NODE_OPTIONS: --enable-source-maps
@@ -178,8 +161,6 @@ Globals:
         COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
         COGNITO_CLIENT_ID: !Ref CognitoUserPoolClientId
         COGNITO_CLIENT_SECRET: !Ref CognitoClientSecret
-        SES_FROM_EMAIL: !Ref SesFromEmail
-        OTP_TTL_SECONDS: !Ref OtpTtlSeconds
         CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
 
 Resources:
@@ -197,7 +178,6 @@ Resources:
       EndpointConfiguration:
         Type: REGIONAL
       MinimumCompressionSize: 1024
-      TracingEnabled: !If [XRayEnabled, true, false]
       # API Gateway answers OPTIONS itself (MOCK integration), so a browser
       # preflight never pays for a Lambda cold start. The single quotes inside
       # these strings are required — API Gateway wants a quoted literal.
@@ -273,7 +253,6 @@ Resources:
   ApiGatewayAccount:
     Type: AWS::ApiGateway::Account
     Condition: ManageApiGatewayAccountSetting
-    DependsOn: ApiGatewayCloudWatchRole
     Properties:
       CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
 
@@ -305,57 +284,34 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-*:*
 
+              # Used by the implemented handlers today.
               - Sid: CognitoUserPoolAccess
                 Effect: Allow
                 Action:
-                  - cognito-idp:SignUp
-                  - cognito-idp:ConfirmSignUp
-                  - cognito-idp:ResendConfirmationCode
-                  - cognito-idp:InitiateAuth
-                  - cognito-idp:RespondToAuthChallenge
-                  - cognito-idp:ForgotPassword
-                  - cognito-idp:ConfirmForgotPassword
-                  - cognito-idp:ChangePassword
-                  - cognito-idp:GetUser
-                  - cognito-idp:DeleteUser
-                  - cognito-idp:GlobalSignOut
-                  - cognito-idp:RevokeToken
+                  - cognito-idp:SignUp                    # signup
+                  - cognito-idp:ConfirmSignUp             # verify-otp
+                  - cognito-idp:ResendConfirmationCode    # resend-otp
+                  - cognito-idp:AdminInitiateAuth         # signin, refresh
                   - cognito-idp:AdminGetUser
-                  - cognito-idp:AdminConfirmSignUp
-                  - cognito-idp:AdminInitiateAuth
-                  - cognito-idp:AdminRespondToAuthChallenge
-                  - cognito-idp:AdminDeleteUser
-                  - cognito-idp:AdminUserGlobalSignOut
+                  - cognito-idp:AdminUserGlobalSignOut    # logout
                 Resource: !Ref CognitoUserPoolArn
 
-              # lib/notifier.js sends the OTP email through SESv2.
-              - Sid: SendOtpEmail
+              # Needed by the routes still returning 501. Kept so implementing
+              # one is a code change, not an IAM debugging session; drop any
+              # line here if you decide that endpoint is not happening.
+              - Sid: CognitoUserPoolAccessPlanned
                 Effect: Allow
-                Action: ses:SendEmail
-                Resource:
-                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/*
-                  - !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/*
+                Action:
+                  - cognito-idp:ForgotPassword            # forgot-password
+                  - cognito-idp:ConfirmForgotPassword     # reset-password
+                  - cognito-idp:AdminSetUserPassword      # reset-password
+                  - cognito-idp:ChangePassword            # change-password
+                  - cognito-idp:DeleteUser                # delete-account
+                  - cognito-idp:AdminDeleteUser           # delete-account
+                  - cognito-idp:GetUser
+                  - cognito-idp:RevokeToken
+                Resource: !Ref CognitoUserPoolArn
 
-              # An SMS OTP is a bare sns:Publish to a phone number, which has
-              # no resource ARN to scope to. The condition at least limits this
-              # to topic-less publishes.
-              - Sid: SendOtpSms
-                Effect: Allow
-                Action: sns:Publish
-                Resource: "*"
-                Condition:
-                  "Null":
-                    sns:TopicArn: "true"
-
-              - !If
-                - XRayEnabled
-                - Sid: XRayTracing
-                  Effect: Allow
-                  Action:
-                    - xray:PutTraceSegments
-                    - xray:PutTelemetryRecords
-                  Resource: "*"
-                - !Ref AWS::NoValue
 
   # =========================================================================
   # ROUTES — public (no Auth block)
@@ -375,6 +331,7 @@ Resources:
       Description: Register a new user in the Cognito user pool
       # The implemented handler is sign_up.js, not signup.js.
       Handler: auth/handlers/sign_up.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -396,6 +353,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-signin
       Description: Authenticate a user and start the OTP challenge
       Handler: auth/handlers/sign_in.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -417,6 +375,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-otp
       Description: Complete the OTP round and return tokens
       Handler: auth/handlers/verify_otp.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -438,6 +397,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-refresh
       Description: Exchange a refresh token for a new id token
       Handler: auth/handlers/refresh_token.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -459,6 +419,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-tokens
       Description: Exchange an auth session for tokens — returns 501 for now
       Handler: auth/handlers/tokens.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -482,6 +443,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-resend-otp
       Description: Resend the confirmation code
       Handler: auth/handlers/resend-otp.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -503,6 +465,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-forgot-password
       Description: Start the forgot-password flow
       Handler: auth/handlers/forgot-password.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -524,6 +487,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-reset-otp
       Description: Validate the password reset code
       Handler: auth/handlers/verify-reset-otp.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -545,6 +509,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-reset-password
       Description: Complete the forgot-password flow with a new password
       Handler: auth/handlers/reset-password.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -570,6 +535,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-logout
       Description: Globally sign the user out and revoke their tokens
       Handler: auth/handlers/logout.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -593,6 +559,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-change-password
       Description: Change the password of the signed-in user
       Handler: auth/handlers/change-password.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -618,6 +585,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-delete-account
       Description: Delete the signed-in user from the user pool
       Handler: auth/handlers/delete-account.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
           Type: Api
@@ -627,80 +595,6 @@ Resources:
             Method: post
             Auth:
               Authorizer: CognitoAuthorizer
-
-  # =========================================================================
-  # COGNITO TRIGGERS
-  #
-  # No Api event: the user pool invokes these directly, which is what the
-  # Lambda::Permission next to each one allows. They are not attached to the
-  # pool by this stack — see the LambdaConfigForUserPool output.
-  # =========================================================================
-
-  DefineAuthChallengeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-define-auth-challenge
-      RetentionInDays: !Ref LogRetentionInDays
-
-  DefineAuthChallengeFunction:
-    Type: AWS::Serverless::Function
-    DependsOn: DefineAuthChallengeLogGroup
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${Environment}-define-auth-challenge
-      Description: Drives the CUSTOM_AUTH chain — password round, then OTP round
-      Handler: auth/handlers/define_auth_challenge.handler
-
-  DefineAuthChallengePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt DefineAuthChallengeFunction.Arn
-      Principal: cognito-idp.amazonaws.com
-      SourceArn: !Ref CognitoUserPoolArn
-
-  CreateAuthChallengeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-create-auth-challenge
-      RetentionInDays: !Ref LogRetentionInDays
-
-  CreateAuthChallengeFunction:
-    Type: AWS::Serverless::Function
-    DependsOn: CreateAuthChallengeLogGroup
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${Environment}-create-auth-challenge
-      Description: Builds each challenge and sends the OTP over SES / SNS
-      Handler: auth/handlers/create_auth_challenge.handler
-
-  CreateAuthChallengePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt CreateAuthChallengeFunction.Arn
-      Principal: cognito-idp.amazonaws.com
-      SourceArn: !Ref CognitoUserPoolArn
-
-  VerifyAuthChallengeLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-verify-auth-challenge
-      RetentionInDays: !Ref LogRetentionInDays
-
-  VerifyAuthChallengeFunction:
-    Type: AWS::Serverless::Function
-    DependsOn: VerifyAuthChallengeLogGroup
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${Environment}-verify-auth-challenge
-      Description: Checks the password against Cognito, then the OTP hash
-      Handler: auth/handlers/verify_auth_challenge_response.handler
-
-  VerifyAuthChallengePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !GetAtt VerifyAuthChallengeFunction.Arn
-      Principal: cognito-idp.amazonaws.com
-      SourceArn: !Ref CognitoUserPoolArn
 
 Outputs:
   ApiInvokeUrl:
@@ -733,10 +627,3 @@ Outputs:
     Description: Whether SECRET_HASH will be computed (an app client secret was supplied).
     Value: !If [HasClientSecret, "yes", "no"]
 
-  LambdaConfigForUserPool:
-    Description: >-
-      LambdaConfig for the user pool. update-user-pool REPLACES the whole pool
-      config, so merge this into describe-user-pool's output rather than passing
-      it alone — or just set the three triggers in the Cognito console.
-    Value: !Sub >-
-      {"DefineAuthChallenge":"${DefineAuthChallengeFunction.Arn}","CreateAuthChallenge":"${CreateAuthChallengeFunction.Arn}","VerifyAuthChallengeResponse":"${VerifyAuthChallengeFunction.Arn}"}

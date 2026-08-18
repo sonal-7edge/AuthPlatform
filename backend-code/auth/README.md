@@ -8,72 +8,77 @@ CDK, Terraform...).
 
 ```
 auth/
-  lib/       # Cognito SDK wrapper, OTP session store, notifier, JWT verification, helpers
-  handlers/  # one Lambda per API endpoint / Cognito trigger
+  lib/       # Cognito SDK wrapper, JWT verification, response helpers
+  handlers/  # one Lambda per API endpoint
 ```
 
 ## Implemented in this pass
 
-| Endpoint | Method | Request body | Response |
+| Endpoint | Handler | Request body | Response |
 |---|---|---|---|
 | `/auth/signup` | `handlers/sign_up.js` | `{firstName,lastName,email\|phone,password}` | `{message}` |
-| `/auth/signin` | `handlers/sign_in.js` | `{email\|phone,password}` | `{message}` |
-| `/auth/verify-otp` | `handlers/verify_otp.js` | `{identifier,otp}` | `{idToken,refreshToken,user}` |
+| `/auth/verify-otp` | `handlers/verify_otp.js` | `{identifier,otp}` | `{message}` |
+| `/auth/signin` | `handlers/sign_in.js` | `{email\|phone,password}` | `{idToken,refreshToken,user}` |
 | `/auth/logout` | `handlers/logout.js` | `Authorization: Bearer <idToken>` | `{message}` |
 | `/auth/refresh` | `handlers/refresh_token.js` | `{refreshToken}` | `{idToken,refreshToken}` |
 | `/auth/tokens` | `handlers/tokens.js` | `{email}` | **501 — not implemented, see below** |
 
-Plus three Cognito **Lambda triggers** that implement the OTP mechanism itself:
-`handlers/define_auth_challenge.js`, `handlers/create_auth_challenge.js`,
-`handlers/verify_auth_challenge_response.js`.
+⚠️ **This differs from the `auth-client` contract** (`auth-client/src/core/constants.js` on branch
+`CNE-444-...`), which expects `signin` to return `{message}` and `verify-otp` to return the tokens.
+Verification codes are now sent by Cognito itself rather than by this service, and Cognito only sends
+its own messages — which means sign-up verification and sign-in are separate operations and there is
+no OTP round on sign-in. The frontend needs updating to match: `signin` yields tokens directly, and
+`verify-otp` only confirms a new account.
 
-This mirrors the contract already shipped by the `auth-client` frontend package
-(`auth-client/src/core/constants.js` on branch `CNE-444-...`), so both sides line up without
-further negotiation.
+## How verification works
 
-## Why Cognito custom-auth challenges, not a hand-rolled OTP store
+Cognito owns the code end to end — this service never generates, stores or sends one.
 
-`signIn` sends `{identifier, password}` once and only gets `{message}` back — no tokens.
-`verifyOtp` then completes login. Instead of building a bespoke OTP table, this uses
-Cognito's native `CUSTOM_AUTH` flow as a two-round challenge chain:
+1. `POST /auth/signup` calls `SignUp` and stops there, leaving the user **UNCONFIRMED**. That is
+   what makes Cognito send its own verification code, using the user pool's message configuration
+   (its default sender needs no SES setup).
+2. `POST /auth/verify-otp` calls `ConfirmSignUp` with that code, moving the user to **CONFIRMED**.
+   It returns `{message}` and no tokens: confirming an account is not authenticating, and the
+   request carries no password to authenticate with.
+3. `POST /auth/signin` calls `AdminInitiateAuth` with `ADMIN_USER_PASSWORD_AUTH` and gets tokens
+   back on the first call. No second step, no OTP, nothing carried between requests.
 
-1. **Round 1 (password)** — `sign_in.js` starts `CUSTOM_AUTH` and immediately answers round 1
-   with the password itself, server-side — the client never sees this round. It's checked
-   inside `verify_auth_challenge_response.js` via `AdminInitiateAuth(ADMIN_USER_PASSWORD_AUTH)`.
-2. **Round 2 (OTP)** — once round 1 passes, `create_auth_challenge.js` generates a 6-digit
-   code, sends it (SES for email / SNS for phone), and stores its hash in Cognito's
-   challenge parameters. `sign_in.js` stashes the `Session` Cognito hands back, keyed by
-   identifier, and returns `{message: 'OTP sent...'}`.
-3. `verify_otp.js` looks up that `Session` and answers round 2 with the code the user typed.
-   `define_auth_challenge.js` allows up to 3 OTP attempts (each wrong attempt sends a fresh
-   code) before failing; on success it tells Cognito to issue tokens, which come back on the
-   same `RespondToAuthChallenge` call.
+The previous design used a Cognito `CUSTOM_AUTH` challenge chain with three trigger Lambdas that
+generated the OTP and delivered it over SES/SNS. It was replaced because Cognito's built-in sender
+cannot deliver a custom-auth challenge — only messages Cognito composes itself — so that design
+required a verified SES identity to work at all. Dropping it removed three Lambda functions,
+`lib/notifier.js`, `lib/otpChallenge.js`, `lib/challengeSessionStore.js`, the SES and SNS IAM grants,
+and two SDK dependencies.
 
-`sign_up.js` creates the user (`SignUpCommand`) and confirms it itself
-(`AdminConfirmSignUpCommand`, bypassing Cognito's own confirmation code — there's only ever
-one OTP mechanism in this system), then feeds straight into the same round-2 kickoff as
-sign-in. `verify_otp.js` is therefore the single completion point for both signup and signin.
+It also removed a bug that made the old flow unusable when deployed: the pending-challenge `Session`
+lived in a module-level `Map`, so `/auth/verify-otp` — a different Lambda from `/auth/signin` — never
+saw what was written and always answered *"No pending verification for this identifier"*. There is no
+cross-request state left to share.
+
+**Cost of the change:** sign-in has no second factor. If you want one, Cognito's own MFA
+(`set-user-pool-mfa-config`) is the place to add it rather than a hand-rolled challenge chain — note
+that email MFA needs the Essentials tier and, as far as I can tell, an SES configuration.
 
 ## Required Cognito configuration (provisioning is a separate concern — see CNE-442)
 
 This package assumes a User Pool + App Client already exist with:
 
-- Explicit auth flows: `ALLOW_CUSTOM_AUTH`, `ALLOW_ADMIN_USER_PASSWORD_AUTH`,
-  `ALLOW_REFRESH_TOKEN_AUTH`.
-- Lambda triggers wired to (function ARNs of):
-  - `DefineAuthChallenge` → `handlers/define_auth_challenge.js`
-  - `CreateAuthChallenge` → `handlers/create_auth_challenge.js`
-  - `VerifyAuthChallengeResponse` → `handlers/verify_auth_challenge_response.js`
-- IAM execution role for every handler in this package needs `cognito-idp:AdminInitiateAuth`,
-  `cognito-idp:AdminConfirmSignUp`, `cognito-idp:AdminUserGlobalSignOut`,
-  `cognito-idp:AdminGetUser` scoped to the pool, plus `ses:SendEmail` / `sns:Publish` for the
-  three trigger Lambdas (OTP delivery).
+- Explicit auth flows: `ALLOW_ADMIN_USER_PASSWORD_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH`.
+- **`AutoVerifiedAttributes` must include `email`** (and/or `phone_number`). This is what makes
+  Cognito send a verification code on `SignUp`. Without it sign-up succeeds and no code is ever
+  sent, which looks exactly like a broken email setup.
+- No Lambda triggers. Nothing in this package needs wiring into the pool's `LambdaConfig`.
+- The IAM execution role is created by `template.yaml`; it needs no SES or SNS access, because
+  Cognito sends the messages.
+
+For **email**, the pool's default sender (`EmailSendingAccount: COGNITO_DEFAULT`) works with no
+setup, capped at 50 messages/day — fine for development, not for production. For **phone**, the pool
+needs its own SMS configuration (an SNS caller role), which the default sender does not cover.
 
 ## Environment variables
 
 `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET` (optional),
-`SES_FROM_EMAIL`, `OTP_TTL_SECONDS`, `CORS_ALLOW_ORIGIN`. `AWS_REGION` comes from the Lambda
-runtime. All of them are set once in `template.yaml` under `Globals.Function.Environment` and
+`CORS_ALLOW_ORIGIN`. `AWS_REGION` comes from the Lambda runtime. All of them are set once in `template.yaml` under `Globals.Function.Environment` and
 fed from stack parameters — see [docs/api-infrastructure.md](docs/api-infrastructure.md#8-environment-variables).
 
 ## Known limitation — `/auth/refresh` and app clients with a secret
@@ -115,15 +120,13 @@ npm run lint
 ```
 
 There is no live Cognito User Pool in this environment, so these tests are the extent of
-verification possible here. End-to-end verification against a real pool (with the three
-triggers wired into its Lambda config) and the running `auth-client` / `frontend-code` is a
-manual follow-up once a dev pool exists (CNE-442).
+verification possible here. End-to-end verification against a real pool and the running
+`auth-client` / `frontend-code` is a manual follow-up (CNE-442).
 
 ## Deploying with SAM
 
 `template.yaml` is a single hand-edited SAM template: one Lambda + CloudWatch log group per
-handler, an API Gateway REST API in front of the routed ones, invoke permissions for the three
-Cognito triggers, and one shared IAM role.
+route, an API Gateway REST API in front of them, and one shared IAM role.
 
 Dependencies and every command live at `backend-code/` — `auth/` holds only source, docs and the
 template. `CodeUri` in the template is `../` for that reason, which is also why each `Handler` is
@@ -131,19 +134,20 @@ template. `CodeUri` in the template is `../` for that reason, which is also why 
 
 ```bash
 cd backend-code
-npm install                        # handlers need the AWS SDK on disk
-sam validate -t auth/template.yaml --lint
-sam build    -t auth/template.yaml --cached --parallel
+npm install          # handlers need the AWS SDK on disk
+npm run deploy
 ```
 
-First deploy — `--guided` prompts for each parameter and saves your answers to `samconfig.toml`
-(gitignored, since it will hold your pool ids):
+`npm run deploy` is the whole thing: it validates the template, builds, and deploys. On the first run
+there is no `samconfig.toml` yet, so it falls through to `sam deploy --guided` and prompts for the
+stack name, region and Cognito parameters, saving them for next time. Every later `npm run deploy`
+reuses those answers.
 
-```bash
-sam deploy --guided
-```
+Use `npm run deploy:guided` when you want to change them again. `npm run build` and
+`npm run validate` are available on their own, and `npm run destroy` tears the stack down
+(`sam delete` — it asks for confirmation first, and takes the log groups with it).
 
-Or pass everything explicitly:
+Or drive SAM directly and pass everything explicitly:
 
 ```bash
 sam deploy \
@@ -156,21 +160,17 @@ sam deploy \
     Environment=dev \
     CognitoUserPoolId=ap-south-1_AbCdEf123 \
     CognitoUserPoolArn=arn:aws:cognito-idp:ap-south-1:111122223333:userpool/ap-south-1_AbCdEf123 \
-    CognitoUserPoolClientId=1h57kf5cpq17m0eml12EXAMPLE \
-    SesFromEmail=no-reply@example.com
+    CognitoUserPoolClientId=1h57kf5cpq17m0eml12EXAMPLE
 ```
 
-Redeploys after the first are `sam build -t auth/template.yaml --cached --parallel && sam deploy`.
+Either way, redeploys after the first are just `npm run deploy`.
 
-Two things to do once, right after the first deploy — both are explained in
-[docs/api-infrastructure.md](docs/api-infrastructure.md#5-deploying):
+One thing to check on a **brand-new AWS account**: add `ManageApiGatewayAccount=true` to the
+parameter overrides so the stack creates API Gateway's account-wide CloudWatch Logs role. Without it
+the stage's access logging fails at create time. See
+[docs/api-infrastructure.md](docs/api-infrastructure.md#5-deploying).
 
-1. **Attach the three triggers to the user pool.** The stack creates them and grants the pool
-   permission to invoke them, but does not modify the pool. Until they're attached,
-   `CUSTOM_AUTH` fails, which means signup, signin and verify-otp all fail.
-2. **In a brand-new account,** add `ManageApiGatewayAccount=true` to the parameter overrides so
-   the stack creates API Gateway's account-wide CloudWatch Logs role. Without it the stage's
-   access logging fails at create time.
+Nothing needs attaching to the user pool — this stack creates no Cognito triggers.
 
 ### Testing it
 
@@ -181,8 +181,9 @@ curl -s localhost:3000/auth/signup -H 'Content-Type: application/json' \
   -d '{"firstName":"Ada","lastName":"Lovelace","email":"ada@example.com","password":"Str0ng-Passw0rd!"}'
 
 # one function, no API Gateway — event on stdin
-echo '{"request":{"session":[{"challengeResult":true,"challengeMetadata":"PASSWORD_VERIFIER"}]},"response":{}}' \
-  | sam local invoke DefineAuthChallengeFunction --event -
+sam local generate-event apigateway aws-proxy --method POST --path auth/signin \
+    --body '{"email":"ada@example.com","password":"Str0ng-Passw0rd!"}' \
+  | sam local invoke SigninFunction --event -
 
 # logs from the deployed stack
 sam logs --stack-name authplatform-dev-auth --name SignupFunction --tail
@@ -196,6 +197,5 @@ sam logs --stack-name authplatform-dev-auth --name SignupFunction --tail
 Copy two blocks in `template.yaml` and change five values. Full walkthrough:
 [docs/api-infrastructure.md §3](docs/api-infrastructure.md#3-adding-an-endpoint).
 
-> **Known blocker:** `/auth/signin` → `/auth/verify-otp` cannot work across separate Lambdas yet —
-> `lib/challengeSessionStore.js` is in-memory. See
-> [docs/api-infrastructure.md §6](docs/api-infrastructure.md#6-things-that-will-bite-you).
+Each handler is independent — no state is carried between requests — so nothing here depends on two
+Lambdas sharing memory.
