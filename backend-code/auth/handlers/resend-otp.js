@@ -1,21 +1,23 @@
-/* POST /auth/resend-otp
-   Resend the sign-up confirmation code
+const Cognito = require('../lib/Cognito')
+const { withErrorHandling } = require('../lib/handlerWrapper')
+const { ok, badRequest, parseBody } = require('../lib/helpers')
 
-   Public route — no authorizer in front of it. */
+/**
+ * POST /auth/resend-otp — { identifier } -> { message }
+ *
+ * Re-sends the sign-up confirmation code (see verify_otp.js) for when the
+ * original email/SMS was delayed or its code already expired.
+ */
+module.exports.handler = withErrorHandling(async (event, deps = {}) => {
+    const body = parseBody(event)
 
-const { json, badRequest, serverError } = require('../utils/helpers')
-
-exports.handler = async (event) => {
-    try {
-        const payload = event.body ? JSON.parse(event.body) : {}
-
-        // TODO: implement resend-otp
-        void payload
-
-        return json(501, { message: 'resend-otp is not implemented yet' })
-    } catch (error) {
-        if (error instanceof SyntaxError) return badRequest('Request body must be valid JSON.')
-        console.error('resend-otp failed', error)
-        return serverError()
+    if (!body?.identifier) {
+        return badRequest('identifier is required')
     }
-}
+
+    const cognito = deps.cognito || new Cognito()
+    const response = await cognito.resendConfirmationCode(body.identifier)
+    console.log('resend-otp: CodeDeliveryDetails', JSON.stringify(response.CodeDeliveryDetails))
+
+    return ok({ message: 'Verification code resent' })
+})

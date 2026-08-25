@@ -36,8 +36,11 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
     // so Cognito rejects an email- or phone-shaped Username on SignUp. Every
     // other flow (verify-otp, signin, ...) keeps using `identifier` as the
     // Username — Cognito resolves those through the alias once it exists.
-    await cognito.signUp({
-        username: crypto.randomUUID(),
+    const username = crypto.randomUUID()
+    console.log('signUp: creating user', { username, identifier_type })
+
+    const result = await cognito.signUp({
+        username,
         password: body.password,
         user_attributes: buildUserAttributes({
             first_name: body.firstName,
@@ -45,6 +48,16 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
             identifier,
             identifier_type,
         }),
+    })
+
+    // CodeDeliveryDetails is Cognito's own confirmation that it queued the
+    // code for delivery, and to where. It's undefined here whenever the
+    // pool's AutoVerifiedAttributes doesn't list the matching attribute —
+    // SignUp still succeeds, but Cognito never sends anything.
+    console.log('signUp: SignUpCommand result', {
+        username,
+        userConfirmed: result.UserConfirmed,
+        codeDeliveryDetails: result.CodeDeliveryDetails,
     })
 
     return ok({

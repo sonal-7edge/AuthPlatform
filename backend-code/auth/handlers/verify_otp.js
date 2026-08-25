@@ -21,6 +21,7 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
     }
 
     const cognito = deps.cognito || new Cognito()
+    console.log('verify-otp: confirming', { identifier: body.identifier, otp: body.otp })
     await cognito.confirmSignUp({ username: body.identifier, code: body.otp })
 
     return ok({ message: 'Account verified — you can sign in now' })
