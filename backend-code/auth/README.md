@@ -21,7 +21,7 @@ auth/
 | `/auth/signin` | `handlers/sign_in.js` | `{email\|phone,password}` | `{idToken,refreshToken,user}` |
 | `/auth/logout` | `handlers/logout.js` | `Authorization: Bearer <idToken>` | `{message}` |
 | `/auth/refresh` | `handlers/refresh_token.js` | `{refreshToken}` | `{idToken,refreshToken}` |
-| `/auth/resend-otp` | `handlers/resend_otp.js` | `{identifier}` | `{message}` |
+| `/auth/resend-otp` | `handlers/resend-otp.js` | `{identifier}` | `{message}` |
 | `/auth/forgot-password` | `handlers/forgot_password.js` | `{email\|phone}` | `{message}` |
 | `/auth/verify-reset-otp` | `handlers/verify_reset_otp.js` | `{identifier,otp}` | `{resetToken}` |
 | `/auth/reset-password` | `handlers/reset_password.js` | `{resetToken,newPassword}` | `{message}` |
@@ -69,23 +69,25 @@ that email MFA needs the Essentials tier and, as far as I can tell, an SES confi
 
 This package assumes a User Pool + App Client already exist with:
 
-- Explicit auth flows: `ALLOW_CUSTOM_AUTH`, `ALLOW_ADMIN_USER_PASSWORD_AUTH`,
-  `ALLOW_REFRESH_TOKEN_AUTH`.
-- Lambda triggers wired to (function ARNs of):
-  - `DefineAuthChallenge` → `handlers/define_auth_challenge.js`
-  - `CreateAuthChallenge` → `handlers/create_auth_challenge.js`
-  - `VerifyAuthChallengeResponse` → `handlers/verify_auth_challenge_response.js`
+- Explicit auth flows: `ALLOW_ADMIN_USER_PASSWORD_AUTH` and `ALLOW_REFRESH_TOKEN_AUTH`. No
+  `ALLOW_CUSTOM_AUTH` — nothing here uses a challenge chain any more. A client missing
+  `ALLOW_ADMIN_USER_PASSWORD_AUTH` fails sign-in with
+  `InvalidParameterException: Auth flow not enabled for this client`.
+- **No Lambda triggers.** The pool needs none; `LambdaConfig` can be empty.
+- `email` and/or `phone_number` under `AutoVerifiedAttributes`, or `SignUp` succeeds and Cognito
+  sends no verification code at all.
 - IAM execution role for every handler in this package needs `cognito-idp:AdminInitiateAuth`,
   `cognito-idp:AdminConfirmSignUp`, `cognito-idp:AdminUserGlobalSignOut`,
   `cognito-idp:AdminGetUser`, `cognito-idp:AdminSetUserPassword`, `cognito-idp:AdminDeleteUser`
-  scoped to the pool, plus `ses:SendEmail` / `sns:Publish` for the three trigger Lambdas (OTP
-  delivery) and for Cognito's own ForgotPassword code delivery.
+  scoped to the pool. No SES or SNS grants: every message is composed and sent by Cognito
+  itself, never by this service.
 
 ## Environment variables
 
 See `.env.example`: `AWS_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
-`COGNITO_CLIENT_SECRET` (optional), `SES_FROM_EMAIL`, `OTP_TTL_SECONDS`, `RESET_TOKEN_SECRET`
-(required — signs the forgot-password `resetToken`), `RESET_TOKEN_TTL_SECONDS`.
+`COGNITO_CLIENT_SECRET` (optional), `RESET_TOKEN_SECRET` (required — signs the forgot-password
+`resetToken`), `RESET_TOKEN_TTL_SECONDS`. Nothing configures OTP delivery or expiry: those are
+Cognito's, set on the user pool.
 
 ## Known limitation — `/auth/refresh` and app clients with a secret
 
@@ -119,9 +121,8 @@ the client only ever holds an idToken, never an accessToken, so Cognito's own
 `ChangePassword`/`DeleteUser` APIs (which take an access token) aren't usable here; both use the
 admin (`AdminSetUserPassword` / `AdminDeleteUser`) equivalents instead.
 
-`resend_otp.js` has no dedicated Cognito mechanism to hook into — every wrong answer to the OTP
-round already makes `create_auth_challenge.js` issue a fresh code, so resend reuses that by
-submitting an answer that can never match, at the cost of one of the `MAX_OTP_ATTEMPTS` retries.
+`resend-otp.js` maps straight onto Cognito's `ResendConfirmationCode`, so it only applies to an
+account still UNCONFIRMED. Cognito invalidates the previous code when it sends the new one.
 
 ## Running locally
 

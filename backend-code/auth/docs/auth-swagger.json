@@ -17,7 +17,7 @@
     }
   ],
   "tags": [
-    { "name": "Sign Up & Sign In", "description": "Account creation and the CUSTOM_AUTH password+OTP sign-in chain" },
+    { "name": "Sign Up & Sign In", "description": "Account creation, Cognito's own sign-up verification code, and password sign-in" },
     { "name": "OTP", "description": "Completing and resending the one-time-passcode round of the auth chain" },
     { "name": "Password Reset", "description": "Forgot-password flow, using Cognito's native code delivery" },
     { "name": "Account", "description": "Authenticated account actions requiring a Bearer idToken" },
@@ -50,8 +50,8 @@
     "/auth/signin": {
       "post": {
         "tags": ["Sign Up & Sign In"],
-        "summary": "Verify the password and start the OTP challenge",
-        "description": "Round 1 (password) of the CUSTOM_AUTH chain is verified and answered server-side; the client never sees it. On success, round 2 (OTP) is kicked off and its Cognito session is stashed server-side, keyed by identifier, for POST /auth/verify-otp to complete.",
+        "summary": "Sign in with a password and receive tokens",
+        "description": "Single-step password authentication via AdminInitiateAuth (ADMIN_USER_PASSWORD_AUTH). There is no OTP round on sign-in and no state carried between requests — tokens come back on this call. An account that has not completed POST /auth/verify-otp returns 400 \"Account is not confirmed\".",
         "requestBody": {
           "required": true,
           "content": {
@@ -62,8 +62,8 @@
         },
         "responses": {
           "200": {
-            "description": "OTP sent to the account's registered contact",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
+            "description": "Authenticated — tokens issued",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SignInResponse" } } }
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -75,8 +75,8 @@
     "/auth/verify-otp": {
       "post": {
         "tags": ["OTP"],
-        "summary": "Complete round 2 (OTP) of sign-up/sign-in and receive tokens",
-        "description": "Answers the pending OTP challenge started by POST /auth/signup or POST /auth/signin. On the correct code, Cognito issues tokens in the same call. On an incorrect code (up to MAX_OTP_ATTEMPTS = 3 total), a fresh code is sent automatically and the pending session is refreshed.",
+        "summary": "Confirm a new account with the code Cognito sent at sign-up",
+        "description": "Spends the verification code Cognito emailed or texted during POST /auth/signup (ConfirmSignUp), moving the user from UNCONFIRMED to CONFIRMED. Returns no tokens: confirming an account is not authenticating, and this request carries no password. The client calls POST /auth/signin afterwards.",
         "requestBody": {
           "required": true,
           "content": {
@@ -87,11 +87,11 @@
         },
         "responses": {
           "200": {
-            "description": "OTP correct — tokens issued",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VerifyOtpResponse" } } }
+            "description": "Account confirmed — sign in next",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageResponse" } } }
           },
           "400": {
-            "description": "Incorrect/expired code, malformed request, or no pending verification for this identifier",
+            "description": "Incorrect or expired code, malformed request, or an account that is already confirmed",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
           },
           "500": { "$ref": "#/components/responses/ServerError" }
@@ -101,8 +101,8 @@
     "/auth/resend-otp": {
       "post": {
         "tags": ["OTP"],
-        "summary": "Resend the OTP for a pending sign-up/sign-in challenge",
-        "description": "There is no dedicated \"resend\" primitive in the CUSTOM_AUTH chain — every wrong answer to the OTP round makes Cognito issue a fresh code. This endpoint reuses that by submitting an answer that can never match, at the cost of one of the MAX_OTP_ATTEMPTS retries.",
+        "summary": "Resend the sign-up verification code",
+        "description": "Calls Cognito's ResendConfirmationCode for an account still UNCONFIRMED, for when the original email or SMS was delayed or its code already expired. Cognito invalidates the previous code.",
         "requestBody": {
           "required": true,
           "content": {
@@ -128,7 +128,7 @@
       "post": {
         "tags": ["Password Reset"],
         "summary": "Start the forgot-password flow",
-        "description": "Kicks off Cognito's native ForgotPassword flow. Unlike sign-in/sign-up, there is no password to verify first, so this uses Cognito's own confirmation-code delivery (SES/SNS as configured on the pool) rather than the CUSTOM_AUTH OTP chain.",
+        "description": "Kicks off Cognito's native ForgotPassword flow, which sends a confirmation code over whatever delivery medium the pool has configured for this user.",
         "requestBody": {
           "required": true,
           "content": {
@@ -382,7 +382,7 @@
           "otp": { "type": "string", "example": "123456" }
         }
       },
-      "VerifyOtpResponse": {
+      "SignInResponse": {
         "type": "object",
         "properties": {
           "idToken": { "type": "string" },
