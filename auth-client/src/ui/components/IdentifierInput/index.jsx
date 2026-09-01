@@ -1,33 +1,57 @@
 import FormField from '../FormField'
 import { IDENTIFIER_TYPE } from '../../../core/constants'
 
+const TABS = [
+  { type: IDENTIFIER_TYPE.EMAIL, label: 'Email' },
+  { type: IDENTIFIER_TYPE.PHONE, label: 'Phone' },
+]
+
+/**
+ * Email/phone segmented switch paired with the matching input.
+ *
+ * @param {{
+ *   type: string,
+ *   value: string,
+ *   onChange: (event) => void,
+ *   onTypeChange: (type: string) => void,
+ *   error?: string,
+ * }} props
+ */
 export default function IdentifierInput({ type, value, onChange, error, onTypeChange }) {
+  const isEmail = type === IDENTIFIER_TYPE.EMAIL
+
   return (
     <div>
-      <div className="flex bg-gray-100 rounded-lg p-0.5 mb-3">
-        {[IDENTIFIER_TYPE.EMAIL, IDENTIFIER_TYPE.PHONE].map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => onTypeChange(t)}
-            className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${
-              type === t
-                ? 'bg-white shadow-sm text-gray-900'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {t === IDENTIFIER_TYPE.EMAIL ? 'Email' : 'Phone'}
-          </button>
-        ))}
+      <div role="tablist" aria-label="Sign in with" className="flex gap-1 p-1 mb-3 bg-ac-subtle rounded-ac">
+        {TABS.map((tab) => {
+          const selected = type === tab.type
+          return (
+            <button
+              key={tab.type}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => onTypeChange(tab.type)}
+              className={`flex-1 h-8 text-sm font-medium rounded-[calc(var(--ac-radius)-2px)] transition-colors
+                ${selected
+                  ? 'bg-ac-surface text-ac-fg shadow-sm'
+                  : 'text-ac-muted hover:text-ac-fg'}`}
+            >
+              {tab.label}
+            </button>
+          )
+        })}
       </div>
+
       <FormField
-        label={type === IDENTIFIER_TYPE.EMAIL ? 'Email' : 'Phone number'}
-        type={type === IDENTIFIER_TYPE.EMAIL ? 'email' : 'tel'}
-        placeholder={type === IDENTIFIER_TYPE.EMAIL ? 'you@example.com' : '+1 234 567 8900'}
+        label={isEmail ? 'Email' : 'Phone number'}
+        type={isEmail ? 'email' : 'tel'}
+        inputMode={isEmail ? 'email' : 'tel'}
+        placeholder={isEmail ? 'you@example.com' : '+1 234 567 8900'}
         value={value}
         onChange={onChange}
         error={error}
-        autoComplete={type === IDENTIFIER_TYPE.EMAIL ? 'email' : 'tel'}
+        autoComplete={isEmail ? 'email' : 'tel'}
       />
     </div>
   )

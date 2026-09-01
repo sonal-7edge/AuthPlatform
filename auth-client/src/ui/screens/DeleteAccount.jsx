@@ -2,37 +2,59 @@ import { useState } from 'react'
 import { useAuth } from '../../react/useAuth'
 import AuthCard from '../components/AuthCard'
 import PasswordField from '../components/PasswordField'
+import Button from '../components/Button'
+import Alert from '../components/Alert'
 
 /**
- * Standalone form for use inside an already-authenticated area of the host
- * app (e.g. an account settings page) — not part of the pre-auth AuthFlow.
+ * Standalone form for an already-authenticated area of the host app (e.g. an
+ * account settings page) — not part of the pre-auth AuthFlow.
+ *
+ * Deletion is gated twice on purpose: an explicit acknowledgement checkbox and
+ * a password re-entry. Neither alone is enough to submit.
+ *
  * @param {{ onDeleted?: () => void, onCancel?: () => void }} props
  */
 export default function DeleteAccount({ onDeleted, onCancel }) {
   const { deleteAccount, isLoading, error, user } = useAuth()
 
   const [password, setPassword] = useState('')
-  const [confirmed, setConfirmed] = useState(false)
+  const [acknowledged, setAcknowledged] = useState(false)
   const [fieldError, setFieldError] = useState('')
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!password) { setFieldError('Password is required to confirm deletion'); return }
+  async function handleSubmit(event) {
+    event.preventDefault()
+    if (!password) {
+      setFieldError('Enter your password to confirm')
+      return
+    }
     setFieldError('')
 
     const result = await deleteAccount({ password })
     if (!result.error) onDeleted?.()
   }
 
-  const displayContact = user?.email || user?.phone || 'your account'
+  const account = user?.email || user?.phone || 'your account'
 
   return (
-    <AuthCard title="Delete account" subtitle="This action is permanent and cannot be undone">
-      <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-5">
-        <p className="text-sm text-red-700 font-medium mb-1">You are about to delete:</p>
-        <p className="text-sm text-red-600 font-mono">{displayContact}</p>
-        <p className="text-xs text-red-500 mt-2">
-          All your data will be permanently removed. This cannot be reversed.
+    <AuthCard
+      title="Delete account"
+      subtitle="This is permanent and cannot be undone"
+      footer={
+        onCancel && (
+          <button
+            className="font-medium text-ac-fg hover:underline underline-offset-4"
+            onClick={onCancel}
+          >
+            Keep my account
+          </button>
+        )
+      }
+    >
+      <div className="mb-5 px-3.5 py-3 rounded-ac border border-ac-danger-border bg-ac-danger-surface">
+        <p className="text-sm font-medium text-ac-danger">You are about to delete</p>
+        <p className="mt-0.5 text-sm text-ac-danger/90 break-all">{account}</p>
+        <p className="mt-2 text-xs text-ac-danger/80">
+          All associated data will be removed immediately. This cannot be reversed.
         </p>
       </div>
 
@@ -40,51 +62,35 @@ export default function DeleteAccount({ onDeleted, onCancel }) {
         <label className="flex items-start gap-2.5 mb-4 cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={confirmed}
-            onChange={(e) => setConfirmed(e.target.checked)}
-            className="mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500"
+            checked={acknowledged}
+            onChange={(event) => setAcknowledged(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-[rgb(var(--ac-danger))] cursor-pointer"
           />
-          <span className="text-sm text-gray-600">
+          <span className="text-sm text-ac-muted">
             I understand this is permanent and want to delete my account
           </span>
         </label>
 
         <PasswordField
-          label="Enter your password to confirm"
-          placeholder="••••••••"
+          label="Confirm your password"
+          placeholder="Enter your password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
+          onChange={(event) => setPassword(event.target.value)}
           error={fieldError}
           autoComplete="current-password"
+          disabled={!acknowledged}
         />
 
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5 mb-4 text-center">
-            {error}
-          </p>
-        )}
+        <Alert tone="error">{error}</Alert>
 
-        <button
+        <Button
           type="submit"
-          disabled={!confirmed || isLoading}
-          className={`w-full h-11 rounded-lg font-semibold text-white transition-opacity flex items-center justify-center
-            ${!confirmed || isLoading ? 'opacity-60 cursor-not-allowed' : 'hover:opacity-90'}
-            bg-red-600`}
-        >
-          {isLoading ? 'Deleting…' : 'Delete My Account'}
-        </button>
+          text="Delete my account"
+          variant="danger"
+          loading={isLoading}
+          disabled={!acknowledged || !password}
+        />
       </form>
-
-      {onCancel && (
-        <p className="text-center mt-5 text-sm text-gray-500">
-          <button
-            className="font-semibold text-primary underline underline-offset-2 hover:text-primary-dark"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-        </p>
-      )}
     </AuthCard>
   )
 }

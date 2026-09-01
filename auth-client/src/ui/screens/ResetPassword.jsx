@@ -3,7 +3,9 @@ import { useAuth } from '../../react/useAuth'
 import AuthCard from '../components/AuthCard'
 import PasswordField from '../components/PasswordField'
 import Button from '../components/Button'
+import Alert from '../components/Alert'
 import { AUTH_SCREENS } from '../constants'
+import { MIN_PASSWORD_LENGTH, validateConfirmation, validatePassword } from '../validation'
 
 export default function ResetPassword({ flow, setFlow }) {
   const { resetPassword, isLoading, error } = useAuth()
@@ -14,54 +16,63 @@ export default function ResetPassword({ flow, setFlow }) {
 
   function validate() {
     const errors = {}
-    if (!form.password) errors.password = 'Password is required'
-    else if (form.password.length < 8) errors.password = 'Minimum 8 characters'
-    if (form.confirm !== form.password) errors.confirm = 'Passwords do not match'
+    const passwordError = validatePassword(form.password, { label: 'New password' })
+    if (passwordError) errors.password = passwordError
+
+    const confirmError = validateConfirmation(form.password, form.confirm)
+    if (confirmError) errors.confirm = confirmError
+
     return errors
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSubmit(event) {
+    event.preventDefault()
     const errors = validate()
-    if (Object.keys(errors).length) { setFieldErrors(errors); return }
+    if (Object.keys(errors).length) {
+      setFieldErrors(errors)
+      return
+    }
     setFieldErrors({})
 
-    const result = await resetPassword({ identifier: pendingIdentifier, resetToken, newPassword: form.password })
+    const result = await resetPassword({
+      identifier: pendingIdentifier,
+      resetToken,
+      newPassword: form.password,
+    })
+
     if (!result.error) {
       setFlow({ screen: AUTH_SCREENS.SIGN_IN, resetToken: null, pendingIdentifier: null })
     }
   }
 
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+  const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
 
   return (
-    <AuthCard title="Set new password" subtitle="Choose a strong password for your account">
+    <AuthCard title="Set a new password" subtitle="Choose a password you haven't used before">
       <form onSubmit={handleSubmit} noValidate>
         <PasswordField
           label="New password"
-          placeholder="Min. 8 characters"
+          placeholder="Enter a new password"
+          hint={`At least ${MIN_PASSWORD_LENGTH} characters`}
           value={form.password}
           onChange={set('password')}
           error={fieldErrors.password}
           autoComplete="new-password"
           showStrength
         />
+
         <PasswordField
           label="Confirm new password"
-          placeholder="Re-enter password"
+          placeholder="Re-enter your new password"
           value={form.confirm}
           onChange={set('confirm')}
           error={fieldErrors.confirm}
           autoComplete="new-password"
         />
 
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5 mb-4 text-center">
-            {error}
-          </p>
-        )}
+        <Alert tone="error">{error}</Alert>
 
-        <Button type="submit" text="Reset Password" loading={isLoading} />
+        <Button type="submit" text="Reset password" loading={isLoading} />
       </form>
     </AuthCard>
   )

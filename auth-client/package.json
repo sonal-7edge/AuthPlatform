@@ -1,12 +1,26 @@
 {
-  "name": "auth-client",
-  "version": "0.1.0",
-  "description": "Plug-and-play frontend authentication library — headless core methods, optional React hooks, and optional prebuilt UI screens.",
+  "name": "@7edge/auth-client",
+  "version": "0.2.0",
+  "description": "Plug-and-play frontend authentication library \u2014 headless core methods, React hooks, and prebuilt UI screens, all from one entry point.",
+  "keywords": [
+    "authentication",
+    "auth",
+    "react",
+    "jwt",
+    "otp",
+    "refresh-token"
+  ],
+  "license": "UNLICENSED",
+  "private": false,
   "type": "module",
-  "main": "./dist/core/index.cjs",
-  "module": "./dist/core/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "exports": {
     ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./core": {
       "import": "./dist/core/index.js",
       "require": "./dist/core/index.cjs"
     },
@@ -18,21 +32,33 @@
       "import": "./dist/ui/index.js",
       "require": "./dist/ui/index.cjs"
     },
-    "./ui/style.css": "./dist/ui/style.css",
+    "./style.css": "./dist/style.css",
+    "./ui/style.css": "./dist/style.css",
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
+    "bin",
     "README.md"
   ],
   "sideEffects": [
     "**/*.css"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build:js": "vite build",
-    "build:css": "tailwindcss -i ./src/ui/styles.css -o ./dist/ui/style.css --minify",
-    "build": "npm run build:js && npm run build:css",
-    "lint": "eslint ."
+    "build:css": "tailwindcss -i ./src/ui/styles.css -o ./dist/style.css --minify",
+    "build": "npm run build:js && npm run build:css && npm run build:templates && npm run build:bin",
+    "prepare": "npm run build",
+    "lint": "eslint .",
+    "verify": "node scripts/verify-package.mjs",
+    "build:templates": "node scripts/build-templates.mjs",
+    "postinstall": "node bin/postinstall.mjs",
+    "build:bin": "node -e \"require('fs').cpSync('bin','dist/bin',{recursive:true})\"",
+    "build:dist-repo": "node scripts/build-dist-repo.mjs",
+    "set-repo": "node scripts/set-repo.mjs"
   },
   "peerDependencies": {
     "react": ">=18",
@@ -61,5 +87,12 @@
     "react-dom": "^19.2.6",
     "tailwindcss": "^3.4.19",
     "vite": "^8.0.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nishan666/auth-client.git"
+  },
+  "bin": {
+    "auth-client": "./bin/auth-client.mjs"
   }
 }

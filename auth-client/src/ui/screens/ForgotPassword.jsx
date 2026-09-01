@@ -3,8 +3,10 @@ import { useAuth } from '../../react/useAuth'
 import AuthCard from '../components/AuthCard'
 import IdentifierInput from '../components/IdentifierInput'
 import Button from '../components/Button'
+import Alert from '../components/Alert'
 import { AUTH_SCREENS } from '../constants'
 import { IDENTIFIER_TYPE, OTP_PURPOSE } from '../../core/constants'
+import { validateIdentifier } from '../validation'
 
 export default function ForgotPassword({ setFlow }) {
   const { forgotPassword, isLoading, error } = useAuth()
@@ -13,25 +15,25 @@ export default function ForgotPassword({ setFlow }) {
   const [identifier, setIdentifier] = useState('')
   const [fieldError, setFieldError] = useState('')
 
-  function validate() {
-    if (!identifier) return identifierType === IDENTIFIER_TYPE.EMAIL ? 'Email is required' : 'Phone number is required'
-    if (identifierType === IDENTIFIER_TYPE.EMAIL && !/\S+@\S+\.\S+/.test(identifier))
-      return 'Enter a valid email'
-    if (identifierType === IDENTIFIER_TYPE.PHONE && !/^\+?\d{7,15}$/.test(identifier.replace(/\s/g, '')))
-      return 'Enter a valid phone number'
-    return ''
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    const err = validate()
-    if (err) { setFieldError(err); return }
+  async function handleSubmit(event) {
+    event.preventDefault()
+    const validationError = validateIdentifier(identifier, identifierType)
+    if (validationError) {
+      setFieldError(validationError)
+      return
+    }
     setFieldError('')
 
-    const result = await forgotPassword({ identifier, identifierType })
+    const isEmail = identifierType === IDENTIFIER_TYPE.EMAIL
+    const result = await forgotPassword({
+      identifier: identifier.trim(),
+      identifierType,
+      [isEmail ? 'email' : 'phone']: identifier.trim(),
+    })
+
     if (!result.error) {
       setFlow({
-        pendingIdentifier: identifier,
+        pendingIdentifier: identifier.trim(),
         identifierType,
         otpPurpose: OTP_PURPOSE.PASSWORD_RESET,
         screen: AUTH_SCREENS.RESET_PASSWORD_OTP,
@@ -39,35 +41,41 @@ export default function ForgotPassword({ setFlow }) {
     }
   }
 
+  function switchIdentifierType(type) {
+    setIdentifierType(type)
+    setIdentifier('')
+    setFieldError('')
+  }
+
   return (
-    <AuthCard title="Forgot password" subtitle="We'll send a reset code to your registered contact">
+    <AuthCard
+      title="Reset password"
+      subtitle="We'll send a verification code to your registered contact"
+      footer={
+        <>
+          Remembered it?{' '}
+          <button
+            className="font-medium text-ac-fg hover:underline underline-offset-4"
+            onClick={() => setFlow({ screen: AUTH_SCREENS.SIGN_IN })}
+          >
+            Sign in
+          </button>
+        </>
+      }
+    >
       <form onSubmit={handleSubmit} noValidate>
         <IdentifierInput
           type={identifierType}
           value={identifier}
-          onChange={(e) => setIdentifier(e.target.value)}
+          onChange={(event) => setIdentifier(event.target.value)}
           error={fieldError}
-          onTypeChange={(t) => { setIdentifierType(t); setIdentifier(''); setFieldError('') }}
+          onTypeChange={switchIdentifierType}
         />
 
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5 mb-4 text-center">
-            {error}
-          </p>
-        )}
+        <Alert tone="error">{error}</Alert>
 
-        <Button type="submit" text="Send Reset Code" loading={isLoading} />
+        <Button type="submit" text="Send code" loading={isLoading} />
       </form>
-
-      <p className="text-center mt-5 text-sm text-gray-500">
-        Remember your password?{' '}
-        <button
-          className="font-semibold text-primary underline underline-offset-2 hover:text-primary-dark"
-          onClick={() => setFlow({ screen: AUTH_SCREENS.SIGN_IN })}
-        >
-          Sign in
-        </button>
-      </p>
     </AuthCard>
   )
 }

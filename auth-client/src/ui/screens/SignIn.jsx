@@ -4,8 +4,10 @@ import AuthCard from '../components/AuthCard'
 import IdentifierInput from '../components/IdentifierInput'
 import PasswordField from '../components/PasswordField'
 import Button from '../components/Button'
+import Alert from '../components/Alert'
 import { AUTH_SCREENS } from '../constants'
 import { IDENTIFIER_TYPE, OTP_PURPOSE } from '../../core/constants'
+import { validateIdentifier } from '../validation'
 
 export default function SignIn({ setFlow }) {
   const { signIn, isLoading, error } = useAuth()
@@ -16,26 +18,24 @@ export default function SignIn({ setFlow }) {
 
   function validate() {
     const errors = {}
-    if (identifierType === IDENTIFIER_TYPE.EMAIL) {
-      if (!form.identifier) errors.identifier = 'Email is required'
-      else if (!/\S+@\S+\.\S+/.test(form.identifier)) errors.identifier = 'Enter a valid email'
-    } else {
-      if (!form.identifier) errors.identifier = 'Phone number is required'
-      else if (!/^\+?\d{7,15}$/.test(form.identifier.replace(/\s/g, '')))
-        errors.identifier = 'Enter a valid phone number'
-    }
+    const identifierError = validateIdentifier(form.identifier, identifierType)
+    if (identifierError) errors.identifier = identifierError
     if (!form.password) errors.password = 'Password is required'
     return errors
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSubmit(event) {
+    event.preventDefault()
     const errors = validate()
-    if (Object.keys(errors).length) { setFieldErrors(errors); return }
+    if (Object.keys(errors).length) {
+      setFieldErrors(errors)
+      return
+    }
     setFieldErrors({})
 
+    const isEmail = identifierType === IDENTIFIER_TYPE.EMAIL
     const result = await signIn({
-      [identifierType === IDENTIFIER_TYPE.EMAIL ? 'email' : 'phone']: form.identifier,
+      [isEmail ? 'email' : 'phone']: form.identifier,
       password: form.password,
     })
 
@@ -49,56 +49,62 @@ export default function SignIn({ setFlow }) {
     }
   }
 
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }))
+  const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
+
+  function switchIdentifierType(type) {
+    setIdentifierType(type)
+    setForm((f) => ({ ...f, identifier: '' }))
+    setFieldErrors({})
+  }
 
   return (
-    <AuthCard title="Welcome back" subtitle="Sign in to your account">
+    <AuthCard
+      title="Sign in"
+      subtitle="Enter your credentials to continue"
+      footer={
+        <>
+          Don&apos;t have an account?{' '}
+          <button
+            className="font-medium text-ac-fg hover:underline underline-offset-4"
+            onClick={() => setFlow({ screen: AUTH_SCREENS.SIGN_UP })}
+          >
+            Create one
+          </button>
+        </>
+      }
+    >
       <form onSubmit={handleSubmit} noValidate>
         <IdentifierInput
           type={identifierType}
           value={form.identifier}
           onChange={set('identifier')}
           error={fieldErrors.identifier}
-          onTypeChange={(t) => { setIdentifierType(t); setForm((f) => ({ ...f, identifier: '' })); setFieldErrors({}) }}
+          onTypeChange={switchIdentifierType}
         />
 
         <PasswordField
           label="Password"
-          placeholder="••••••••"
+          placeholder="Enter your password"
           value={form.password}
           onChange={set('password')}
           error={fieldErrors.password}
           autoComplete="current-password"
         />
 
-        <div className="flex justify-end mb-4 -mt-2">
+        <div className="flex justify-end -mt-1 mb-4">
           <button
             type="button"
-            className="text-xs font-medium text-primary hover:text-primary-dark underline underline-offset-2"
+            className="text-xs text-ac-muted hover:text-ac-fg hover:underline underline-offset-4"
             onClick={() => setFlow({ screen: AUTH_SCREENS.FORGOT_PASSWORD })}
           >
             Forgot password?
           </button>
         </div>
 
-        {error && (
-          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3.5 py-2.5 mb-4 text-center">
-            {error}
-          </p>
-        )}
+        <Alert tone="error">{error}</Alert>
 
-        <Button type="submit" text="Sign In" loading={isLoading} />
+        <Button type="submit" text="Sign in" loading={isLoading} />
       </form>
-
-      <p className="text-center mt-5 text-sm text-gray-500">
-        Don&apos;t have an account?{' '}
-        <button
-          className="font-semibold text-primary underline underline-offset-2 hover:text-primary-dark"
-          onClick={() => setFlow({ screen: AUTH_SCREENS.SIGN_UP })}
-        >
-          Sign up
-        </button>
-      </p>
     </AuthCard>
   )
 }

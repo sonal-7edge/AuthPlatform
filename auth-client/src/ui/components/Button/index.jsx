@@ -1,20 +1,51 @@
 import LoadingSpinner from '../LoadingSpinner'
 
+const VARIANTS = {
+  primary: 'bg-ac-accent text-ac-accent-fg hover:bg-ac-accent-hover',
+  secondary: 'bg-ac-surface text-ac-fg border border-ac-border-strong hover:bg-ac-subtle',
+  danger: 'bg-ac-danger text-white hover:opacity-90',
+}
+
 /**
- * Primary action button used across auth screens.
- * @param {{ text: string, handleClick?: () => void, loading?: boolean, type?: string, disabled?: boolean }} props
+ * Full-width action button.
+ *
+ * @param {{
+ *   text?: string,
+ *   children?: React.ReactNode,
+ *   handleClick?: () => void,
+ *   loading?: boolean,
+ *   type?: 'button' | 'submit' | 'reset',
+ *   variant?: keyof typeof VARIANTS,
+ *   disabled?: boolean,
+ *   className?: string,
+ * }} props
  */
-export default function Button({ text, handleClick, loading, type = 'button', disabled }) {
+export default function Button({
+  text,
+  children,
+  handleClick,
+  loading,
+  type = 'button',
+  variant = 'primary',
+  disabled,
+  className = '',
+}) {
+  const isInactive = disabled || loading
+
   return (
     <button
       type={type}
-      disabled={disabled || loading}
+      disabled={isInactive}
       onClick={handleClick}
-      className={`w-full h-11 rounded-lg font-semibold text-white transition-opacity flex items-center justify-center
-        ${disabled || loading ? 'opacity-60 cursor-not-allowed' : 'hover:opacity-90'}
-        bg-gradient-to-r from-primary to-primary-dark`}
+      aria-busy={loading || undefined}
+      className={`w-full h-10 px-4 inline-flex items-center justify-center gap-2 rounded-ac
+        text-sm font-medium transition-colors
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac-accent/25 focus-visible:ring-offset-2
+        ${VARIANTS[variant] ?? VARIANTS.primary}
+        ${isInactive ? 'opacity-50 pointer-events-none' : ''}
+        ${className}`}
     >
-      {loading ? <LoadingSpinner /> : text}
+      {loading ? <LoadingSpinner /> : (children ?? text)}
     </button>
   )
 }
