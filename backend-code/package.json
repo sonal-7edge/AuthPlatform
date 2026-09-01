@@ -1,14 +1,26 @@
 {
   "name": "backend-code",
   "version": "1.0.0",
-  "description": "Backend service",
-  "main": "server.js",
+  "private": true,
+  "description": "Backend service — Lambda handlers and the SAM template that deploys them",
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "jest --coverage",
+    "validate": "sam validate -t auth/template.yaml --lint",
+    "build": "sam build -t auth/template.yaml --cached --parallel",
+    "deploy": "npm run validate && npm run build && if [ -f samconfig.toml ]; then sam deploy --capabilities CAPABILITY_NAMED_IAM; else sam deploy --guided --capabilities CAPABILITY_NAMED_IAM; fi",
+    "deploy:guided": "npm run validate && npm run build && sam deploy --guided --capabilities CAPABILITY_NAMED_IAM",
+    "destroy": "sam delete"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.900.0",
+    "aws-jwt-verify": "^5.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "aws-sdk-client-mock": "^4.1.0",
     "eslint": "^10.3.0",
-    "globals": "^17.6.0"
+    "globals": "^17.6.0",
+    "jest": "^29.7.0"
   }
 }

@@ -1,0 +1,6 @@
+# sam build output — matches auth/.aws-sam too
+.aws-sam/
+
+node_modules
+coverage
+.env
