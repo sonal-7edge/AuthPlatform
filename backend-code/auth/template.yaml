@@ -51,6 +51,10 @@ Metadata:
           - CognitoUserPoolArn
           - CognitoUserPoolClientId
           - CognitoClientSecret
+      - Label: { default: Password reset }
+        Parameters:
+          - ResetTokenSecret
+          - ResetTokenTtlSeconds
       - Label: { default: Observability & limits }
         Parameters:
           - CorsAllowOrigin
@@ -99,6 +103,25 @@ Parameters:
     Default: ""
     NoEcho: true
     Description: App client secret, if the client has one. Empty for a public client.
+
+  # lib/resetToken.js HMACs the resetToken with this. It has no default on
+  # purpose: an empty secret would make crypto.createHmac throw at runtime, and
+  # a shared default would let anyone forge a token that resets any account.
+  ResetTokenSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: >-
+      Long random secret signing the forgot-password resetToken. Required —
+      generate with `openssl rand -base64 48`. Rotating it invalidates every
+      reset token currently in flight, which is harmless.
+
+  ResetTokenTtlSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 60
+    MaxValue: 3600
+    Description: How long a resetToken stays valid between verify-reset-otp and reset-password.
 
   CorsAllowOrigin:
     Type: String
@@ -162,6 +185,9 @@ Globals:
         COGNITO_CLIENT_ID: !Ref CognitoUserPoolClientId
         COGNITO_CLIENT_SECRET: !Ref CognitoClientSecret
         CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
+        # Read by lib/resetToken.js (verify_reset_otp.js / reset_password.js).
+        RESET_TOKEN_SECRET: !Ref ResetTokenSecret
+        RESET_TOKEN_TTL_SECONDS: !Ref ResetTokenTtlSeconds
 
 Resources:
 
@@ -294,6 +320,9 @@ Resources:
                   - cognito-idp:AdminInitiateAuth         # signin, refresh
                   - cognito-idp:AdminGetUser
                   - cognito-idp:AdminUserGlobalSignOut    # logout
+                  - cognito-idp:ForgotPassword            # forgot-password
+                  - cognito-idp:ConfirmForgotPassword     # verify-reset-otp
+                  - cognito-idp:AdminSetUserPassword      # reset-password
                 Resource: !Ref CognitoUserPoolArn
 
               # Needed by the routes still returning 501. Kept so implementing
@@ -302,9 +331,6 @@ Resources:
               - Sid: CognitoUserPoolAccessPlanned
                 Effect: Allow
                 Action:
-                  - cognito-idp:ForgotPassword            # forgot-password
-                  - cognito-idp:ConfirmForgotPassword     # reset-password
-                  - cognito-idp:AdminSetUserPassword      # reset-password
                   - cognito-idp:ChangePassword            # change-password
                   - cognito-idp:DeleteUser                # delete-account
                   - cognito-idp:AdminDeleteUser           # delete-account
@@ -464,7 +490,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-forgot-password
       Description: Start the forgot-password flow
-      Handler: auth/handlers/forgot-password.handler
+      Handler: auth/handlers/forgot_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -486,7 +512,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-reset-otp
       Description: Validate the password reset code
-      Handler: auth/handlers/verify-reset-otp.handler
+      Handler: auth/handlers/verify_reset_otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -508,7 +534,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-reset-password
       Description: Complete the forgot-password flow with a new password
-      Handler: auth/handlers/reset-password.handler
+      Handler: auth/handlers/reset_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:

@@ -25,9 +25,16 @@ auth/
 | `/auth/forgot-password` | `handlers/forgot_password.js` | `{email\|phone}` | `{message}` |
 | `/auth/verify-reset-otp` | `handlers/verify_reset_otp.js` | `{identifier,otp}` | `{resetToken}` |
 | `/auth/reset-password` | `handlers/reset_password.js` | `{resetToken,newPassword}` | `{message}` |
-| `/auth/change-password` | `handlers/change_password.js` | `Authorization: Bearer <idToken>`, `{currentPassword,newPassword}` | `{message}` |
-| `/auth/delete-account` | `handlers/delete_account.js` | `Authorization: Bearer <idToken>`, `{password}` | `{message}` |
 | `/auth/tokens` | `handlers/tokens.js` | `{email}` | **501 — not implemented, see below** |
+
+Not routed yet — `template.yaml` still points these two at `change-password.js` / `delete-account.js`,
+which are 501 stubs. The implementations below exist but are unreachable until those `Handler:`
+lines are switched to the underscore files, the way the reset trio just was.
+
+| Endpoint | Implementation (unrouted) | Request body | Response |
+|---|---|---|---|
+| `/auth/change-password` | `handlers/change_password.js` | `Authorization: Bearer <idToken>`, `{currentPassword,newPassword}` | **501 — stub routed** |
+| `/auth/delete-account` | `handlers/delete_account.js` | `Authorization: Bearer <idToken>`, `{password}` | **501 — stub routed** |
 
 ⚠️ **This differs from the `auth-client` contract** (`auth-client/src/core/constants.js` on branch
 `CNE-444-...`), which expects `signin` to return `{message}` and `verify-otp` to return the tokens.
@@ -88,6 +95,16 @@ See `.env.example`: `AWS_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
 `COGNITO_CLIENT_SECRET` (optional), `RESET_TOKEN_SECRET` (required — signs the forgot-password
 `resetToken`), `RESET_TOKEN_TTL_SECONDS`. Nothing configures OTP delivery or expiry: those are
 Cognito's, set on the user pool.
+
+Deployed, these come from `template.yaml` parameters. **`ResetTokenSecret` has no default and no
+empty fallback on purpose** — `lib/resetToken.js` passes it straight to `crypto.createHmac`, which
+throws `TypeError: The "key" argument must be of type string` on an unset value, and a shared
+default would let anyone forge a token that resets any account. Generate one with
+`openssl rand -base64 48` and pass it at deploy time:
+
+```bash
+sam deploy --parameter-overrides ResetTokenSecret="$(openssl rand -base64 48)"
+```
 
 ## Known limitation — `/auth/refresh` and app clients with a secret
 
