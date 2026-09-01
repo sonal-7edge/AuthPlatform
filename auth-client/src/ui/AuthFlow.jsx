@@ -1,0 +1,48 @@
+import { useState } from 'react'
+import SignIn from './screens/SignIn'
+import SignUp from './screens/SignUp'
+import OtpVerify from './screens/OtpVerify'
+import ForgotPassword from './screens/ForgotPassword'
+import ResetPassword from './screens/ResetPassword'
+import { AUTH_SCREENS } from './constants'
+import { IDENTIFIER_TYPE, OTP_PURPOSE } from '../core/constants'
+
+/**
+ * Drop-in pre-auth journey: sign in, sign up, OTP verification, forgot/reset
+ * password. Renders nothing once the user is authenticated — read
+ * `isAuthenticated` from useAuth() in the host app to swap to the real app,
+ * or pass `onAuthenticated` to be notified the moment sign-in completes.
+ *
+ * Screens that belong to an already-authenticated area (ChangePassword,
+ * DeleteAccount) are exported separately — compose them into your own
+ * app routes instead.
+ */
+export default function AuthFlow({ initialScreen = AUTH_SCREENS.SIGN_IN, onAuthenticated }) {
+  const [flow, setFlowState] = useState({
+    screen: initialScreen,
+    pendingIdentifier: null,
+    identifierType: IDENTIFIER_TYPE.EMAIL,
+    otpPurpose: OTP_PURPOSE.AUTH,
+    resetToken: null,
+  })
+
+  function setFlow(patch) {
+    setFlowState((f) => ({ ...f, ...patch }))
+  }
+
+  const props = { flow, setFlow, onAuthenticated }
+
+  switch (flow.screen) {
+    case AUTH_SCREENS.SIGN_UP:
+      return <SignUp {...props} />
+    case AUTH_SCREENS.OTP:
+    case AUTH_SCREENS.RESET_PASSWORD_OTP:
+      return <OtpVerify {...props} />
+    case AUTH_SCREENS.FORGOT_PASSWORD:
+      return <ForgotPassword {...props} />
+    case AUTH_SCREENS.RESET_PASSWORD:
+      return <ResetPassword {...props} />
+    default:
+      return <SignIn {...props} />
+  }
+}
