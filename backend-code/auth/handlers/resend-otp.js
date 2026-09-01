@@ -1,6 +1,6 @@
 const Cognito = require('../lib/Cognito')
 const { withErrorHandling } = require('../lib/handlerWrapper')
-const { ok, badRequest, parseBody } = require('../lib/helpers')
+const { ok, badRequest, parseBody, usernameFor } = require('../lib/helpers')
 
 /**
  * POST /auth/resend-otp — { identifier } -> { message }
@@ -16,7 +16,9 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
     }
 
     const cognito = deps.cognito || new Cognito()
-    const response = await cognito.resendConfirmationCode(body.identifier)
+    // Same pre-confirmation constraint as verify_otp.js: the alias isn't
+    // claimed yet, so the user has to be named by its derived username.
+    const response = await cognito.resendConfirmationCode(usernameFor(body.identifier))
     console.log('resend-otp: CodeDeliveryDetails', JSON.stringify(response.CodeDeliveryDetails))
 
     return ok({ message: 'Verification code resent' })
