@@ -1,12 +1,37 @@
 const { badRequest, unauthorized, notFound, serverError } = require('./helpers')
 
 /**
+ * Cognito raises NotAuthorizedException for several unrelated situations, so
+ * a single message is either vague or actively wrong — it used to mention a
+ * verification code even on a rejected password. Cognito's own message is the
+ * only thing distinguishing them, hence the substring matching; an unknown
+ * one falls back to a phrase true of every case.
+ *
+ * Codes typed by a user do not land here at all: those are
+ * CodeMismatchException and ExpiredCodeException, mapped separately below.
+ */
+function notAuthorizedMessage(error) {
+    const detail = error?.message || ''
+
+    if (/refresh token/i.test(detail)) {
+        return 'Session has expired, please sign in again'
+    }
+    if (/user is disabled/i.test(detail)) {
+        return 'This account has been disabled'
+    }
+    if (/cannot be confirmed/i.test(detail)) {
+        return 'Account is already verified — please sign in'
+    }
+    return 'Incorrect credentials'
+}
+
+/**
  * Maps known Cognito error names to the HTTP response the frontend contract
  * expects ({message} body + matching status). Anything unrecognised falls
  * through to a generic 500 so we never leak internal error details.
  */
 const COGNITO_ERROR_RESPONSES = {
-    NotAuthorizedException: () => unauthorized('Incorrect credentials or verification code'),
+    NotAuthorizedException: (error) => unauthorized(notAuthorizedMessage(error)),
     UserNotFoundException: () => notFound('User not found'),
     UsernameExistsException: () => badRequest('An account with that email/phone already exists'),
     CodeMismatchException: () => badRequest('Incorrect verification code'),

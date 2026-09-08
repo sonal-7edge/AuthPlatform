@@ -112,6 +112,22 @@ class Cognito {
         return cognitoClient.send(command)
     }
 
+    /**
+     * Proves the caller knows `password`, without issuing a session.
+     *
+     * change_password.js and delete_account.js need this because the client
+     * only ever holds an idToken, never an accessToken, so Cognito's own
+     * ChangePassword / DeleteUser APIs are unusable here. Running the same
+     * password check sign-in uses means a stolen idToken alone is not enough
+     * to change a password or delete an account.
+     *
+     * Throws NotAuthorizedException on a wrong password, which
+     * handlerWrapper.js maps to 401. The tokens it mints are discarded.
+     */
+    async adminVerifyPassword({ username, password }) {
+        await this.signIn({ username, password })
+    }
+
     async adminGetUser(username) {
         const command = new AdminGetUserCommand({
             UserPoolId: this.user_pool_id,

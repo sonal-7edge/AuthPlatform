@@ -317,25 +317,13 @@ Resources:
                   - cognito-idp:SignUp                    # signup
                   - cognito-idp:ConfirmSignUp             # verify-otp
                   - cognito-idp:ResendConfirmationCode    # resend-otp
-                  - cognito-idp:AdminInitiateAuth         # signin, refresh
+                  - cognito-idp:AdminInitiateAuth         # signin, refresh, password re-check
                   - cognito-idp:AdminGetUser
                   - cognito-idp:AdminUserGlobalSignOut    # logout
                   - cognito-idp:ForgotPassword            # forgot-password
                   - cognito-idp:ConfirmForgotPassword     # verify-reset-otp
-                  - cognito-idp:AdminSetUserPassword      # reset-password
-                Resource: !Ref CognitoUserPoolArn
-
-              # Needed by the routes still returning 501. Kept so implementing
-              # one is a code change, not an IAM debugging session; drop any
-              # line here if you decide that endpoint is not happening.
-              - Sid: CognitoUserPoolAccessPlanned
-                Effect: Allow
-                Action:
-                  - cognito-idp:ChangePassword            # change-password
-                  - cognito-idp:DeleteUser                # delete-account
+                  - cognito-idp:AdminSetUserPassword      # reset-password, change-password
                   - cognito-idp:AdminDeleteUser           # delete-account
-                  - cognito-idp:GetUser
-                  - cognito-idp:RevokeToken
                 Resource: !Ref CognitoUserPoolArn
 
 
@@ -592,7 +580,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-change-password
       Description: Change the password of the signed-in user
-      Handler: auth/handlers/change-password.handler
+      Handler: auth/handlers/change_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -618,7 +606,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-delete-account
       Description: Delete the signed-in user from the user pool
-      Handler: auth/handlers/delete-account.handler
+      Handler: auth/handlers/delete_account.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:

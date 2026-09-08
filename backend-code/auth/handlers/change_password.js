@@ -1,7 +1,7 @@
 const Cognito = require('../lib/Cognito')
 const { verifyIdToken } = require('../lib/verifyIdToken')
 const { withErrorHandling } = require('../lib/handlerWrapper')
-const { ok, badRequest, parseBody, getHeader } = require('../lib/helpers')
+const { ok, badRequest, unauthorized, parseBody, getHeader } = require('../lib/helpers')
 
 /**
  * POST /auth/change-password — Authorization: Bearer <idToken>,
@@ -25,7 +25,18 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
     const username = claims['cognito:username'] || claims.sub
 
     const cognito = deps.cognito || new Cognito()
-    await cognito.adminVerifyPassword({ username, password: body.currentPassword })
+    // Distinguish "your current password is wrong" from every other 401 this
+    // route can return — the request carries an idToken as well as a password,
+    // so the wrapper's generic message cannot say which one was rejected.
+    try {
+        await cognito.adminVerifyPassword({ username, password: body.currentPassword })
+    } catch (error) {
+        if (error?.name === 'NotAuthorizedException') {
+            return unauthorized('Current password is incorrect')
+        }
+        throw error
+    }
+
     await cognito.adminSetUserPassword({ username, password: body.newPassword, permanent: true })
 
     return ok({ message: 'Password changed successfully' })

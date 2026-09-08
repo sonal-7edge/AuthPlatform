@@ -25,16 +25,11 @@ auth/
 | `/auth/forgot-password` | `handlers/forgot_password.js` | `{email\|phone}` | `{message}` |
 | `/auth/verify-reset-otp` | `handlers/verify_reset_otp.js` | `{identifier,otp}` | `{resetToken}` |
 | `/auth/reset-password` | `handlers/reset_password.js` | `{resetToken,newPassword}` | `{message}` |
+| `/auth/change-password` | `handlers/change_password.js` | `Authorization: Bearer <idToken>`, `{currentPassword,newPassword}` | `{message}` |
+| `/auth/delete-account` | `handlers/delete_account.js` | `Authorization: Bearer <idToken>`, `{password}` | `{message}` |
 | `/auth/tokens` | `handlers/tokens.js` | `Authorization: Bearer <idToken>`, optional `{refreshToken}` | `{idToken,refreshToken?,user}` |
 
-Not routed yet — `template.yaml` still points these two at `change-password.js` / `delete-account.js`,
-which are 501 stubs. The implementations below exist but are unreachable until those `Handler:`
-lines are switched to the underscore files, the way the reset trio just was.
-
-| Endpoint | Implementation (unrouted) | Request body | Response |
-|---|---|---|---|
-| `/auth/change-password` | `handlers/change_password.js` | `Authorization: Bearer <idToken>`, `{currentPassword,newPassword}` | **501 — stub routed** |
-| `/auth/delete-account` | `handlers/delete_account.js` | `Authorization: Bearer <idToken>`, `{password}` | **501 — stub routed** |
+Every route above is routed to the handler named in the table — there are no 501 stubs left.
 
 ⚠️ **This differs from the `auth-client` contract** (`auth-client/src/core/constants.js` on branch
 `CNE-444-...`), which expects `signin` to return `{message}` and `verify-otp` to return the tokens.
