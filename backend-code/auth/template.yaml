@@ -443,7 +443,7 @@ Resources:
     DependsOn: TokensLogGroup
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-tokens
-      Description: Exchange an auth session for tokens — returns 501 for now
+      Description: Exchange an established session (Bearer idToken) for tokens
       Handler: auth/handlers/tokens.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
@@ -453,8 +453,12 @@ Resources:
             RestApiId: !Ref AuthApi
             Path: /auth/tokens
             Method: post
-
-  # --- below here the handlers are still 501 stubs -------------------------
+            # No longer a public route — it identifies the caller from the
+            # Bearer idToken, so it gets the same gateway authorizer as the
+            # other token-protected routes. The handler verifies the token
+            # again itself, the way logout does.
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   ResendOtpLogGroup:
     Type: AWS::Logs::LogGroup
@@ -578,6 +582,10 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-change-password
       RetentionInDays: !Ref LogRetentionInDays
 
+  # --- change-password and delete-account are the only routes left on a 501
+  # --- stub: these two Handler: lines point at the hyphenated files, while
+  # --- the working implementations sit in change_password.js /
+  # --- delete_account.js. Switch them over the way the reset trio was.
   ChangePasswordFunction:
     Type: AWS::Serverless::Function
     DependsOn: ChangePasswordLogGroup

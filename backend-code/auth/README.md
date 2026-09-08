@@ -25,7 +25,7 @@ auth/
 | `/auth/forgot-password` | `handlers/forgot_password.js` | `{email\|phone}` | `{message}` |
 | `/auth/verify-reset-otp` | `handlers/verify_reset_otp.js` | `{identifier,otp}` | `{resetToken}` |
 | `/auth/reset-password` | `handlers/reset_password.js` | `{resetToken,newPassword}` | `{message}` |
-| `/auth/tokens` | `handlers/tokens.js` | `{email}` | **501 — not implemented, see below** |
+| `/auth/tokens` | `handlers/tokens.js` | `Authorization: Bearer <idToken>`, optional `{refreshToken}` | `{idToken,refreshToken?,user}` |
 
 Not routed yet — `template.yaml` still points these two at `change-password.js` / `delete-account.js`,
 which are 501 stubs. The implementations below exist but are unreachable until those `Handler:`
@@ -114,13 +114,37 @@ Cognito's `SECRET_HASH` (which is keyed by username). This works as-is when the 
 app client does have a secret, extend the request to also carry the identifier and pass it
 through to `Cognito.refreshTokens(refreshToken, username)`.
 
-## `/auth/tokens` — unresolved contract gap
+## `/auth/tokens` — how it identifies the caller
 
-`auth-client`'s `fetchTokens()` calls this with only `{email}`, and no UI screen actually uses
-it (dead code in the current build). Minting tokens from an email alone with no proof of
-identity would be a security hole, so this handler always returns `501`. If this needs to do
-something real, the `auth-client` contract needs to change first (e.g. carry a refresh token
-or a signed session artifact) — flag with whoever owns CNE-444.
+`auth-client`'s `fetchTokens()` calls this, and adopting the tokens it returns is what flips
+`isAuthenticated` — which is what swaps a host app from `<AuthFlow />` to its home screen. The
+generated `SignIn` screen calls it straight after `signIn`, so a 501 here left a user with
+correct credentials stuck on the sign-in form.
+
+**Identity comes from the Bearer idToken, never from the request body.** That distinction is why
+this handler used to be a deliberate 501: the older contract sent `{email}` and nothing else, and
+an email is not proof of anything — honouring it would have minted tokens for any account whose
+address you could guess.
+
+`auth-client` 0.2.0 closed that gap. Its HTTP backend sends an **empty body** (the identifier it
+resolves locally is passed only to the mock backend), and its request interceptor attaches the
+stored idToken to every call except `/auth/refresh` — see `dist` → `httpClient.js`. So the request
+now arrives with a Cognito-signed token to verify, and the route carries the `CognitoAuthorizer`
+on top of the handler's own `verifyIdToken`, the same belt-and-braces as `/auth/logout`.
+
+Two paths, both requiring a valid idToken first:
+
+- **`{refreshToken}` in the body** — mints a genuinely fresh pair off Cognito. The verified claims
+  supply the username here, so `SECRET_HASH` is computable and this works on an app client that
+  has a client secret — unlike `/auth/refresh` (see the limitation below).
+- **empty body** (what the client sends today) — returns the verified idToken with the profile
+  decoded from its claims. Nothing new is issued: with no password and no refresh token there is
+  nothing to mint from, and echoing a token the caller just presented and we verified grants no
+  access it didn't already have.
+
+`refreshToken` is left out of the response on that second path on purpose — the client's
+`saveTokens()` merges into the stored set, so omitting the key preserves the refresh token
+sign-in saved rather than clobbering it.
 
 ## Forgot-password design note
 
@@ -148,7 +172,8 @@ From `backend-code/`, not from here:
 ```bash
 cd backend-code
 npm install
-npm test    # jest, mocks CognitoIdentityProviderClient via aws-sdk-client-mock — no AWS account needed
+npm test    # jest — handlers take their Cognito/verifier collaborators as an
+            # injectable second argument, so no AWS account is needed
 npm run lint
 ```
 

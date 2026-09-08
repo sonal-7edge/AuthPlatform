@@ -33,7 +33,12 @@ function withErrorHandling(handler) {
             if (map_to_response) {
                 return map_to_response(error)
             }
-            if (error?.message === 'Missing bearer token' || error?.name === 'JwtExpiredError' || error?.name === 'JwtInvalidSignatureError') {
+            // Every aws-jwt-verify failure is a bad token, not a bad server:
+            // expiry, signature, issuer/audience/claim mismatch, unparseable,
+            // unknown kid. They all have to answer 401 — the frontend's http
+            // interceptor keys its refresh-and-retry off that status, and a
+            // 500 would strand the caller on a token it could have renewed.
+            if (error?.message === 'Missing bearer token' || /^(Jwt|Jwk|Kid)/.test(error?.name || '')) {
                 return unauthorized()
             }
             return serverError()
