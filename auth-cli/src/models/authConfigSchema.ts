@@ -1,0 +1,153 @@
+import { z } from 'zod';
+import {
+  AWS_REGION_VALUES,
+  CUSTOM_ATTRIBUTE_NAME_REGEX,
+  LAMBDA_ARN_REGEX,
+  POOL_NAME_REGEX,
+  REFRESH_TOKEN_AUTH_FLOW,
+  RESERVED_ATTRIBUTE_NAMES,
+} from '../config/constants';
+
+const PasswordPolicySchema = z.object({
+  minLength: z
+    .number()
+    .int()
+    .min(6, 'Minimum length must be at least 6')
+    .max(20, 'Minimum length must be at most 20'),
+  requireUppercase: z.boolean(),
+  requireLowercase: z.boolean(),
+  requireNumbers: z.boolean(),
+  requireSymbols: z.boolean(),
+  tempPasswordDays: z
+    .number()
+    .int()
+    .min(1, 'Temporary password validity must be at least 1 day')
+    .max(365, 'Temporary password validity must be at most 365 days'),
+});
+
+const MfaSchema = z
+  .object({
+    enabled: z.boolean(),
+    mode: z.enum(['off', 'optional', 'required']),
+    methods: z.array(z.enum(['totp', 'sms'])),
+  })
+  .refine((mfa) => !mfa.enabled || mfa.methods.length > 0, {
+    message: 'At least one MFA method must be selected when MFA is enabled',
+    path: ['methods'],
+  });
+
+const lambdaArn = (): z.ZodEffects<z.ZodString, string, string> =>
+  z.string().refine((value) => value.trim().length === 0 || LAMBDA_ARN_REGEX.test(value.trim()), {
+    message: 'Must be a valid Lambda ARN (arn:aws:lambda:REGION:ACCOUNT:function:NAME) or empty',
+  });
+
+const AppClientSchema = z
+  .object({
+    name: z.string().min(1, 'Client name is required'),
+    generateSecret: z.boolean(),
+    authFlows: z.array(
+      z.enum([
+        'ALLOW_USER_SRP_AUTH',
+        'ALLOW_USER_PASSWORD_AUTH',
+        'ALLOW_CUSTOM_AUTH',
+        'ALLOW_REFRESH_TOKEN_AUTH',
+        'ALLOW_ADMIN_USER_PASSWORD_AUTH',
+      ]),
+    ),
+    accessTokenValidity: z
+      .number()
+      .int()
+      .min(1)
+      .max(1440, 'Access token validity must be at most 1440 minutes'),
+    idTokenValidity: z
+      .number()
+      .int()
+      .min(1)
+      .max(1440, 'ID token validity must be at most 1440 minutes'),
+    refreshTokenValidity: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650, 'Refresh token validity must be at most 3650 days'),
+    callbackUrls: z.array(z.string().url('Each callback URL must be a valid URL')),
+    logoutUrls: z.array(z.string().url('Each logout URL must be a valid URL')),
+  })
+  .refine((client) => client.authFlows.includes(REFRESH_TOKEN_AUTH_FLOW), {
+    message: 'App client auth flows must include ALLOW_REFRESH_TOKEN_AUTH',
+    path: ['authFlows'],
+  });
+
+const CustomAttributeSchema = z.object({
+  name: z
+    .string()
+    .regex(
+      CUSTOM_ATTRIBUTE_NAME_REGEX,
+      'Attribute name must be 1-20 characters: letters, numbers, and underscores only',
+    )
+    .refine((n) => !RESERVED_ATTRIBUTE_NAMES.includes(n), {
+      message: 'email and name are already built-in attributes; choose a different name',
+    }),
+  type: z.enum(['String', 'Number', 'Boolean', 'DateTime']),
+  required: z.boolean(),
+  mutable: z.boolean(),
+  minLength: z.number().int().min(0).optional(),
+  maxLength: z.number().int().min(1).optional(),
+  minValue: z.number().int().optional(),
+  maxValue: z.number().int().optional(),
+});
+
+const LambdaTriggersSchema = z.object({
+  preSignUp: lambdaArn(),
+  postConfirmation: lambdaArn(),
+  preAuthentication: lambdaArn(),
+  postAuthentication: lambdaArn(),
+  customMessage: lambdaArn(),
+  preTokenGeneration: lambdaArn(),
+  userMigration: lambdaArn(),
+  defineChallenge: lambdaArn(),
+  createChallenge: lambdaArn(),
+  verifyChallenge: lambdaArn(),
+});
+
+export const AuthConfigSchema = z
+  .object({
+    provider: z.enum(['aws', 'azure', 'gcp'], {
+      errorMap: () => ({ message: 'Provider must be one of: aws, azure, gcp' }),
+    }),
+
+    region: z.enum(AWS_REGION_VALUES as [string, ...string[]], {
+      errorMap: () => ({ message: `Region must be one of: ${AWS_REGION_VALUES.join(', ')}` }),
+    }),
+
+    poolName: z
+      .string()
+      .min(1, 'User pool name is required')
+      .regex(
+        POOL_NAME_REGEX,
+        'User pool name must contain only letters, numbers, hyphens, and underscores',
+      ),
+
+    selfSignup: z.boolean(),
+    emailVerification: z.boolean(),
+    deletionProtection: z.boolean(),
+
+    signInOptions: z
+      .array(z.enum(['email', 'phone', 'username']))
+      .min(1, 'At least one sign-in option must be selected'),
+
+    passwordPolicy: PasswordPolicySchema,
+    mfa: MfaSchema,
+
+    appClients: z.array(AppClientSchema).min(1, 'At least one app client is required'),
+
+    lambdaTriggers: LambdaTriggersSchema,
+
+    customAttributes: z.array(CustomAttributeSchema),
+  })
+  .refine((config) => config.provider === 'aws', {
+    message: 'Only the "aws" provider is currently supported (azure and gcp are coming soon)',
+    path: ['provider'],
+  });
+
+export type AuthConfigInput = z.input<typeof AuthConfigSchema>;
+export type AuthConfigOutput = z.output<typeof AuthConfigSchema>;
