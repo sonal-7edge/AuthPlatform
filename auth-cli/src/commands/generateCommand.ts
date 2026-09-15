@@ -104,11 +104,15 @@ export function registerGenerateCommand(program: Command): void {
 
       writeCfnOutput(config, outputPath);
 
-      await promptDeploy(outputPath, config.poolName);
+      await promptDeploy(outputPath, config.poolName, config.region);
     });
 }
 
-async function promptDeploy(templatePath: string, defaultStackName: string): Promise<void> {
+async function promptDeploy(
+  templatePath: string,
+  defaultStackName: string,
+  defaultRegion: string,
+): Promise<void> {
   const { shouldDeploy } = await inquirer.prompt<{ shouldDeploy: boolean }>([
     {
       type: 'confirm',
@@ -129,8 +133,9 @@ async function promptDeploy(templatePath: string, defaultStackName: string): Pro
     ]);
   }
 
-  const { stackName, profile, ready } = await inquirer.prompt<{
+  const { stackName, region, profile, ready } = await inquirer.prompt<{
     stackName: string;
+    region: string;
     profile: string;
     ready: boolean;
   }>([
@@ -139,6 +144,12 @@ async function promptDeploy(templatePath: string, defaultStackName: string): Pro
       name: 'stackName',
       message: 'Stack name:',
       default: defaultStackName,
+    },
+    {
+      type: 'input',
+      name: 'region',
+      message: 'AWS region to deploy into:',
+      default: defaultRegion,
     },
     {
       type: 'input',
@@ -158,5 +169,5 @@ async function promptDeploy(templatePath: string, defaultStackName: string): Pro
     return;
   }
 
-  await runDeploy(templatePath, { stackName, profile: profile || undefined });
+  await runDeploy(templatePath, { stackName, region, profile: profile || undefined });
 }
