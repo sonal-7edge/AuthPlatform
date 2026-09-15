@@ -166,14 +166,16 @@ npm install github:Nishan666/auth-client
 `auth_tokens`, holds the whole bundle:
 
 ```jsonc
-{
-  "id_token": "…", "access_token": "…", "refresh_token": "…",
-  "session_token": "…", "token_type": "Bearer", "expires_in": 300
-}
+{ "id_token": "…", "refresh_token": "…" }
 ```
 
-Refreshes replace it atomically and rotate the refresh token; the previous one is
-revoked. Logging out clears the key.
+The platform API issues an `idToken` and a `refreshToken` only — no
+`accessToken`, `expires_in` or `session_token` — so `accessToken` on state reads
+`null`. The store normalises camelCase, snake_case and nested `data.*` inputs
+alike, and preserves any extra fields a deployment adds, so a richer bundle
+needs no code change.
+
+Refreshes replace the bundle atomically. Logging out clears the key.
 
 ---
 
@@ -321,11 +323,12 @@ exactly that, and it is what the verification suite runs against.
 Modelled on the ORDO host app (`src/helpers/tokenManager.js`), so both agree on
 the contract the real API will use.
 
-- **One bundle, one key.** `{ id_token, access_token, refresh_token,
-  session_token, expires_in, token_type }` persisted as a single JSON blob under
-  `auth_tokens`, so a refresh swaps it atomically — no window where a new
-  `id_token` sits beside a stale `refresh_token`. camelCase, nested `data.*` and
-  snake_case inputs are all normalised on the way in.
+- **One bundle, one key.** Persisted as a single JSON blob under `auth_tokens`,
+  so a refresh swaps it atomically — no window where a new `id_token` sits
+  beside a stale `refresh_token`. The deployed API returns `idToken` and
+  `refreshToken` only; camelCase, snake_case and nested `data.*` inputs are all
+  normalised, and unknown fields are preserved, so a deployment that adds
+  `accessToken` or `expires_in` needs no code change.
 - **Proactive refresh.** Requests check `exp` first and renew inside a 30s skew,
   so the request goes out valid instead of 401-ing and being retried.
 - **Single-flight lock.** Concurrent callers queue behind one refresh — verified:
@@ -541,8 +544,7 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
   published under that name. Scoping is also required by GitHub Packages and
   Azure Artifacts.
 - **Token storage moved to a single key.** Tokens now live as one JSON bundle
-  under `auth_tokens` (`{ id_token, access_token, refresh_token, session_token,
-  … }`) instead of one key per token. A refresh now swaps the bundle atomically.
+  under `auth_tokens` instead of one key per token. A refresh now swaps the bundle atomically.
   `DEFAULT_STORAGE_KEYS` is `{ TOKENS, USER }`; `ID_TOKEN` / `REFRESH_TOKEN` are
   gone. **Existing sessions will not migrate — users are signed out once.**
 - **`refreshToken` is no longer on state.** It was both a state field (the token

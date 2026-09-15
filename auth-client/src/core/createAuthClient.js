@@ -181,12 +181,6 @@ export function createAuthClient(config = {}) {
     }
   })
 
-  /** Identifier of the signed-in user, passed to backend calls that need it. */
-  function currentContext() {
-    const user = tokenStore.getUser()
-    return { identifier: user?.email ?? user?.phone ?? null, user }
-  }
-
   function persistSession(data) {
     // The API returns the user alongside the bundle. Split them: the user
     // belongs under its own key, not inside the token blob where it would be
@@ -250,12 +244,12 @@ export function createAuthClient(config = {}) {
   }
 
   function changePassword(payload) {
-    return runAction(() => backend.changePassword(payload, currentContext()))
+    return runAction(() => backend.changePassword(payload))
   }
 
   function deleteAccount(payload) {
     return runAction(async () => {
-      const result = await backend.deleteAccount(payload, currentContext())
+      const result = await backend.deleteAccount(payload)
       // Only tear the session down if the deletion actually succeeded —
       // a wrong-password rejection must leave the user signed in.
       if (!result.error) {

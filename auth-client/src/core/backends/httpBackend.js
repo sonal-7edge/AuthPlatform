@@ -3,9 +3,9 @@ import { handleErrorResponse } from '../handleErrorResponse'
 
 /**
  * Wraps a configured axios instance (see httpClient.js) into the named method
- * shape `createAuthClient` expects, normalising errors on the way out. Methods
- * take `(payload, context)`; `context` is unused here but kept so an
- * alternative backend can rely on it.
+ * shape `createAuthClient` expects, normalising errors on the way out.
+ * Authenticated routes need no extra argument — the Bearer header is injected
+ * by the request interceptor.
  *
  * @param {import('axios').AxiosInstance} http
  * @param {{ endpoints?: Partial<typeof AUTH_ENDPOINTS> }} [options]
