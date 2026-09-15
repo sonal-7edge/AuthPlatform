@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Default token values. Kept in CSS (not JS) so the palette applies before
+ * React hydrates — no flash of unstyled auth screen. `applyTheme()` overrides
+ * these by setting the same custom properties inline on <html>.
+ *
+ * Channel triplets, not hex: Tailwind reads them as
+ * `rgb(var(--ac-accent) / <alpha-value>)` so opacity utilities keep working.
+ */
+@layer base {
+  :root {
+    --ac-bg: 248 250 252;
+    --ac-surface: 255 255 255;
+    --ac-border: 226 232 240;
+    --ac-border-strong: 203 213 225;
+    --ac-fg: 15 23 42;
+    --ac-muted: 100 116 139;
+    --ac-subtle: 241 245 249;
+    --ac-accent: 15 23 42;
+    --ac-accent-fg: 255 255 255;
+    --ac-accent-hover: 30 41 59;
+    --ac-danger: 220 38 38;
+    --ac-danger-surface: 254 242 242;
+    --ac-danger-border: 254 202 202;
+    --ac-success: 22 163 74;
+    --ac-success-surface: 240 253 244;
+    --ac-success-border: 187 247 208;
+
+    --ac-radius: 0.5rem;
+    --ac-radius-lg: 0.75rem;
+    --ac-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+  }
+}
+
+@layer base {
+  /**
+   * Scoped reset. Tailwind's Preflight is disabled (see tailwind.config.js)
+   * because this stylesheet ships to host apps, and a global reset would
+   * silently restyle *their* pages. These rules reproduce only the parts
+   * Preflight provides that the utilities actually depend on, confined to the
+   * auth screens' own subtree.
+   */
+  /**
+   * Every rule below is wrapped in :where() so it contributes ZERO
+   * specificity — exactly what Preflight achieves with bare element
+   * selectors. Without it, `.ac-root button` (0,1,1) would outrank a utility
+   * class like `.bg-ac-accent` (0,1,0) and silently strip the styling off
+   * every button in the library.
+   */
+  :where(.ac-root),
+  :where(.ac-root) *,
+  :where(.ac-root) *::before,
+  :where(.ac-root) *::after {
+    box-sizing: border-box;
+    /* Without this, Tailwind's `border` (width-only) renders nothing. */
+    border-width: 0;
+    border-style: solid;
+    border-color: rgb(var(--ac-border));
+  }
+
+  .ac-root {
+    font-family: var(--ac-font);
+    line-height: 1.5;
+    color: rgb(var(--ac-fg));
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :where(.ac-root) h1,
+  :where(.ac-root) h2,
+  :where(.ac-root) h3,
+  :where(.ac-root) p {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  :where(.ac-root) button {
+    /* Buttons don't inherit typography, and default to a grey chrome background. */
+    font: inherit;
+    color: inherit;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  :where(.ac-root) button:disabled {
+    cursor: not-allowed;
+  }
+
+  :where(.ac-root) input {
+    font: inherit;
+    color: inherit;
+    margin: 0;
+  }
+
+  :where(.ac-root) svg {
+    display: block;
+  }
+
+  :where(.ac-root) ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+}
+
+@layer components {
+  /* Numeric inputs render spinners that break the fixed-width OTP boxes. */
+  .ac-otp-input::-webkit-outer-spin-button,
+  .ac-otp-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .ac-otp-input {
+    -moz-appearance: textfield;
+  }
+}
