@@ -8,7 +8,7 @@ import { IDENTIFIER_TYPE, OTP_LENGTH, OTP_PURPOSE } from '../../core/constants'
 
 const RESEND_SECONDS = 60
 
-export default function OtpVerify({ flow, setFlow, onAuthenticated }) {
+export default function OtpVerify({ flow, setFlow }) {
   const { verifyOtp, verifyResetOtp, resendOtp, isLoading, error } = useAuth()
   const { pendingIdentifier, identifierType, otpPurpose } = flow
 
@@ -54,13 +54,18 @@ export default function OtpVerify({ flow, setFlow, onAuthenticated }) {
         return
       }
 
+      // Sign-up confirmation only: the API returns a message, not tokens, so
+      // the user signs in next. `onAuthenticated` fires from SignIn instead.
       const result = await verifyOtp(payload)
       if (!result.error) {
-        setFlow({ pendingIdentifier: null, screen: AUTH_SCREENS.SIGN_IN })
-        onAuthenticated?.(result.data)
+        setFlow({
+          pendingIdentifier: null,
+          screen: AUTH_SCREENS.SIGN_IN,
+          notice: 'Account verified. Sign in to continue.',
+        })
       }
     },
-    [pendingIdentifier, otpPurpose, verifyOtp, verifyResetOtp, setFlow, onAuthenticated]
+    [pendingIdentifier, otpPurpose, verifyOtp, verifyResetOtp, setFlow]
   )
 
   function handleChange(index, rawValue) {
@@ -113,7 +118,7 @@ export default function OtpVerify({ flow, setFlow, onAuthenticated }) {
 
   async function handleResend() {
     setResent(false)
-    const result = await resendOtp({ identifier: pendingIdentifier, purpose: otpPurpose })
+    const result = await resendOtp({ identifier: pendingIdentifier })
     if (result.error) return
 
     setDigits(Array(OTP_LENGTH).fill(''))
@@ -130,7 +135,7 @@ export default function OtpVerify({ flow, setFlow, onAuthenticated }) {
 
   return (
     <AuthCard
-      title={isResetFlow ? 'Verify to reset' : 'Verify your identity'}
+      title={isResetFlow ? 'Verify to reset' : 'Confirm your account'}
       subtitle={`Enter the ${OTP_LENGTH}-digit code sent to ${pendingIdentifier || `your ${contactLabel}`}`}
     >
       <form onSubmit={handleSubmit}>

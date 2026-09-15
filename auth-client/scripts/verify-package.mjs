@@ -70,13 +70,17 @@ function client(config = {}) {
   })
 }
 
-/** A client that has completed sign-up and OTP, plus its storage. */
+/**
+ * A signed-in client, following the real journey: sign up, confirm the account
+ * with the emailed code, then sign in. Confirming does not authenticate.
+ */
 async function signedIn(config = {}) {
   const storage = config.storage ?? memoryStorage()
   const auth = client({ ...config, storage })
   const email = config.email ?? EMAIL
   await auth.signUp({ email, password: PASSWORD, firstName: 'Ver', lastName: 'Ify' })
   await auth.verifyOtp({ identifier: email, otp: server.OTP })
+  await auth.signIn({ email, password: PASSWORD })
   return { auth, storage, email }
 }
 
@@ -107,7 +111,7 @@ await test('client exposes every documented method', () => {
     'signUp', 'signIn', 'login', 'verifyOtp', 'resendOtp',
     'forgotPassword', 'verifyResetOtp', 'resetPassword',
     'changePassword', 'deleteAccount', 'signOut', 'logout',
-    'fetchTokens', 'refreshToken', 'getTokens', 'getIdToken',
+    'refreshToken', 'getTokens', 'getIdToken',
     'getAccessToken', 'getRefreshToken', 'getValidToken', 'expiresIn',
     'getState', 'subscribe', 'connect', 'disconnect', 'destroy',
   ]
@@ -136,7 +140,6 @@ await test('endpoints match the backend contract exactly', () => {
     RESET_PASSWORD: '/auth/reset-password',
     CHANGE_PASSWORD: '/auth/change-password',
     DELETE_ACCOUNT: '/auth/delete-account',
-    TOKENS: '/auth/tokens',
     REFRESH: '/auth/refresh',
     LOGOUT: '/auth/logout',
   })
@@ -166,21 +169,45 @@ await test('sign-up issues an OTP challenge without authenticating', async () =>
   assert.equal(auth.getIdToken(), null)
 })
 
-await test('verifyOtp completes sign-in and persists the contract bundle', async () => {
+await test('signIn authenticates directly — no OTP step', async () => {
   const { auth, email } = await signedIn({ email: 'bundle@example.com' })
 
   const state = auth.getState()
-  assert.equal(state.isAuthenticated, true)
+  assert.equal(state.isAuthenticated, true, 'signIn alone should authenticate')
   assert.equal(state.user.email, email)
 
   const tokens = auth.getTokens()
-  for (const field of ['id_token', 'access_token', 'refresh_token', 'session_token']) {
-    assert.ok(tokens[field], `bundle is missing ${field}`)
-  }
-  assert.equal(tokens.token_type, 'Bearer')
-  assert.equal(typeof tokens.expires_in, 'number')
+  // The API returns camelCase idToken/refreshToken; the store normalises them.
+  assert.ok(tokens.id_token, 'bundle is missing id_token')
+  assert.ok(tokens.refresh_token, 'bundle is missing refresh_token')
   assert.equal(state.idToken, tokens.id_token)
-  assert.equal(state.accessToken, tokens.access_token)
+
+  // The API issues no accessToken, so state exposes null rather than a stale value.
+  assert.equal(state.accessToken, null, 'accessToken should be null — the API issues none')
+})
+
+await test('verifyOtp confirms a new account without authenticating', async () => {
+  const auth = client()
+  const email = 'confirmonly@example.com'
+  await auth.signUp({ email, password: PASSWORD, firstName: 'C', lastName: 'O' })
+
+  const result = await auth.verifyOtp({ identifier: email, otp: server.OTP })
+
+  assert.equal(result.error, false, result.message)
+  assert.equal(auth.getState().isAuthenticated, false,
+    'confirming an account must not authenticate — the user signs in next')
+  assert.equal(auth.getIdToken(), null)
+})
+
+await test('an unconfirmed account cannot sign in', async () => {
+  const auth = client()
+  const email = 'unconfirmed@example.com'
+  await auth.signUp({ email, password: PASSWORD, firstName: 'U', lastName: 'C' })
+
+  const result = await auth.signIn({ email, password: PASSWORD })
+  assert.equal(result.error, true)
+  assert.equal(result.code, 'USER_NOT_CONFIRMED')
+  assert.equal(auth.getState().isAuthenticated, false)
 })
 
 await test('the user object is not smuggled into the token bundle', async () => {
@@ -293,6 +320,7 @@ await test('getValidToken refreshes proactively inside the expiry skew', async (
     })
     await auth.signUp({ email: 'skew@example.com', password: PASSWORD })
     await auth.verifyOtp({ identifier: 'skew@example.com', otp: shortLived.OTP })
+    await auth.signIn({ email: 'skew@example.com', password: PASSWORD })
 
     const initial = auth.getIdToken()
     assert.ok(isExpired(initial, 30), 'precondition: token should sit inside the skew window')
@@ -335,12 +363,32 @@ await test('authenticated routes carry a Bearer token; pre-auth routes do not', 
     'change-password must send Authorization: Bearer')
 })
 
-await test('a revoked session forces logout', async () => {
+await test('a failed refresh with a still-valid token does NOT log the user out', async () => {
   let forced = 0
-  const { auth } = await signedIn({ email: 'revoked@example.com', onForceLogout: () => { forced++ } })
+  const { auth } = await signedIn({ email: 'stillvalid@example.com', onForceLogout: () => { forced++ } })
 
-  // Simulate server-side revocation: the stored refresh token is now unknown.
+  // Server-side revocation while the token we hold is still good.
   auth.tokenStore.saveTokens({ refresh_token: 'rt_revoked_by_server' })
+
+  const result = await auth.refreshToken()
+
+  assert.equal(result.error, true, 'the refresh should report failure')
+  assert.equal(forced, 0, 'a typo-triggered 401 must not sign the user out')
+  assert.equal(auth.getState().isAuthenticated, true, 'the session should survive')
+  assert.ok(auth.getIdToken(), 'the still-valid idToken should be kept')
+})
+
+await test('a failed refresh with an expired token forces logout', async () => {
+  let forced = 0
+  const { auth } = await signedIn({ email: 'expired@example.com', onForceLogout: () => { forced++ } })
+
+  // An expired idToken plus an unusable refresh token is an unrecoverable session.
+  const past = Math.floor(Date.now() / 1000) - 3600
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  auth.tokenStore.saveTokens({
+    id_token: `${b64({ alg: 'none' })}.${b64({ sub: 'x', exp: past })}.unsigned`,
+    refresh_token: 'rt_revoked_by_server',
+  })
 
   const result = await auth.refreshToken()
   assert.equal(result.error, true)
@@ -355,14 +403,14 @@ await test('forgot -> verify -> reset, then sign in with the new password', asyn
   const { auth, email } = await signedIn({ email: 'reset@example.com' })
   await auth.logout()
 
-  assert.equal((await auth.forgotPassword({ email, identifier: email })).error, false)
+  assert.equal((await auth.forgotPassword({ email })).error, false)
 
   const verified = await auth.verifyResetOtp({ identifier: email, otp: server.OTP })
   assert.equal(verified.error, false, verified.message)
   assert.ok(verified.data.resetToken, 'no reset token issued')
 
   const NEW = 'BrandNewPass456!'
-  const reset = await auth.resetPassword({ identifier: email, resetToken: verified.data.resetToken, newPassword: NEW })
+  const reset = await auth.resetPassword({ resetToken: verified.data.resetToken, newPassword: NEW })
   assert.equal(reset.error, false, reset.message)
 
   assert.equal((await auth.signIn({ email, password: PASSWORD })).error, true, 'the old password must stop working')
@@ -372,7 +420,7 @@ await test('forgot -> verify -> reset, then sign in with the new password', asyn
 await test('a reset token cannot be replayed', async () => {
   const { auth, email } = await signedIn({ email: 'replay@example.com' })
   await auth.logout()
-  await auth.forgotPassword({ identifier: email })
+  await auth.forgotPassword({ email })
   const { data } = await auth.verifyResetOtp({ identifier: email, otp: server.OTP })
 
   await auth.resetPassword({ resetToken: data.resetToken, newPassword: 'FirstReset123!' })
@@ -429,6 +477,7 @@ await test('subscribers are notified on state changes', async () => {
 
   await auth.signUp({ email: 'subs@example.com', password: PASSWORD })
   await auth.verifyOtp({ identifier: 'subs@example.com', otp: server.OTP })
+  await auth.signIn({ email: 'subs@example.com', password: PASSWORD })
 
   assert.ok(seen.length > 0, 'subscriber never fired')
   assert.equal(seen.at(-1), true, 'final state should be authenticated')

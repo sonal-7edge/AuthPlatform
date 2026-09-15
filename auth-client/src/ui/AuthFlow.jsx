@@ -24,10 +24,13 @@ export default function AuthFlow({ initialScreen = AUTH_SCREENS.SIGN_IN, onAuthe
     identifierType: IDENTIFIER_TYPE.EMAIL,
     otpPurpose: OTP_PURPOSE.AUTH,
     resetToken: null,
+    notice: null,
   })
 
   function setFlow(patch) {
-    setFlowState((f) => ({ ...f, ...patch }))
+    // A one-shot notice (e.g. "account verified") must not survive the next
+    // navigation, so clear it unless this patch is the one setting it.
+    setFlowState((f) => ({ ...f, notice: null, ...patch }))
   }
 
   const props = { flow, setFlow, onAuthenticated }

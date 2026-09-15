@@ -6,10 +6,10 @@ import PasswordField from '../components/PasswordField'
 import Button from '../components/Button'
 import Alert from '../components/Alert'
 import { AUTH_SCREENS } from '../constants'
-import { IDENTIFIER_TYPE, OTP_PURPOSE } from '../../core/constants'
+import { IDENTIFIER_TYPE } from '../../core/constants'
 import { validateIdentifier } from '../validation'
 
-export default function SignIn({ setFlow }) {
+export default function SignIn({ setFlow, flow, onAuthenticated }) {
   const { signIn, isLoading, error } = useAuth()
 
   const [identifierType, setIdentifierType] = useState(IDENTIFIER_TYPE.EMAIL)
@@ -34,19 +34,14 @@ export default function SignIn({ setFlow }) {
     setFieldErrors({})
 
     const isEmail = identifierType === IDENTIFIER_TYPE.EMAIL
+    // Signing in authenticates directly — the client persists the bundle and
+    // the host app swaps to its own UI off `isAuthenticated`. No OTP step.
     const result = await signIn({
-      [isEmail ? 'email' : 'phone']: form.identifier,
+      [isEmail ? 'email' : 'phone']: form.identifier.trim(),
       password: form.password,
     })
 
-    if (!result.error) {
-      setFlow({
-        pendingIdentifier: form.identifier,
-        identifierType,
-        otpPurpose: OTP_PURPOSE.AUTH,
-        screen: AUTH_SCREENS.OTP,
-      })
-    }
+    if (!result.error) onAuthenticated?.(result.data)
   }
 
   const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
@@ -101,6 +96,7 @@ export default function SignIn({ setFlow }) {
           </button>
         </div>
 
+        {flow?.notice && <Alert tone="success">{flow.notice}</Alert>}
         <Alert tone="error">{error}</Alert>
 
         <Button type="submit" text="Sign in" loading={isLoading} />

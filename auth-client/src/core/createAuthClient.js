@@ -153,7 +153,7 @@ export function createAuthClient(config = {}) {
   })
 
   backend = createHttpBackend(
-    createHttpClient({ baseURL, headers, tokenStore, tokenManager, onForceLogout: forceLogout }),
+    createHttpClient({ baseURL, headers, tokenStore, tokenManager }),
     { endpoints }
   )
 
@@ -208,20 +208,29 @@ export function createAuthClient(config = {}) {
     return runAction(() => backend.signUp(payload))
   }
 
+  /**
+   * Signs in and persists the returned bundle. The API authenticates on
+   * credentials alone — there is no OTP step in this flow.
+   */
   function signIn(payload) {
-    return runAction(() => backend.signIn(payload))
-  }
-
-  /** Completes sign-in: verifies the OTP and persists the returned bundle. */
-  function verifyOtp(payload) {
     return runAction(async () => {
-      const result = await backend.verifyOtp(payload)
+      const result = await backend.signIn(payload)
       if (!result.error) {
         persistSession(result.data)
         broadcaster.post(BROADCAST_EVENTS.LOGIN)
       }
       return result
     })
+  }
+
+  /**
+   * Confirms a newly registered account with the code sent at sign-up.
+   *
+   * This does NOT authenticate: the API responds with a message only, and the
+   * user signs in afterwards. Password reset uses `verifyResetOtp` instead.
+   */
+  function verifyOtp(payload) {
+    return runAction(() => backend.verifyOtp(payload))
   }
 
   function resendOtp(payload) {
@@ -257,14 +266,6 @@ export function createAuthClient(config = {}) {
     })
   }
 
-  function fetchTokens() {
-    return runAction(async () => {
-      const result = await backend.fetchTokens({}, currentContext())
-      if (!result.error) persistSession(result.data)
-      return result
-    })
-  }
-
   /** Forces a refresh now. Routed through the manager, so it shares the lock. */
   function refreshToken() {
     return runAction(async () => {
@@ -279,7 +280,9 @@ export function createAuthClient(config = {}) {
 
   function signOut() {
     return runAction(async () => {
-      const result = await backend.signOut({ refreshToken: tokenStore.getRefreshToken() })
+      // Bearer-authenticated with an empty body; the server revokes every
+      // refresh token for the user.
+      const result = await backend.signOut({})
       // Clear locally regardless: a failed server-side revoke must not strand
       // the user in a half-signed-in state.
       clearSession()
@@ -327,7 +330,6 @@ export function createAuthClient(config = {}) {
     signOut,
     logout: signOut,
     // tokens
-    fetchTokens,
     refreshToken,
     getTokens: () => tokenStore.getTokens(),
     getIdToken: () => tokenStore.getIdToken(),

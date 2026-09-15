@@ -35,10 +35,13 @@ for (const required of ['dist/index.js', 'dist/style.css', 'dist/templates/confi
   }
 }
 
-// --- 2. wipe everything except .git so removals propagate ------------------
+// --- 2. wipe only what this script owns ------------------------------------
+// Scoped deliberately: wiping the whole directory would delete unrelated
+// files someone keeps there (.git, .gitignore, other tools' output).
+// `dist/` goes wholesale so deletions inside it propagate.
 mkdirSync(OUT, { recursive: true })
-for (const entry of readdirSync(OUT)) {
-  if (entry !== '.git') rmSync(join(OUT, entry), { recursive: true, force: true })
+for (const owned of ['dist', 'package.json', 'README.md']) {
+  rmSync(join(OUT, owned), { recursive: true, force: true })
 }
 
 // --- 3. copy the artifact --------------------------------------------------
@@ -71,12 +74,9 @@ const distPkg = {
 }
 writeFileSync(join(OUT, 'package.json'), JSON.stringify(distPkg, null, 2) + '\n')
 
-// dist/ is build output here, but it is the whole point of the published repo.
-writeFileSync(join(OUT, '.gitignore'), 'node_modules\n')
-
 // --- 5. report -------------------------------------------------------------
 const count = (dir) =>
-  readdirSync(dir, { recursive: true }).filter((f) => !String(f).startsWith('.git')).length
+  readdirSync(join(dir, 'dist'), { recursive: true }).length + 2 // + package.json, README
 
 const isRepo = existsSync(join(OUT, '.git'))
 console.log(`

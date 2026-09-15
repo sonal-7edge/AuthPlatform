@@ -32,7 +32,6 @@ export function createHttpBackend(http, { endpoints } = {}) {
     resetPassword: (payload) => post(routes.RESET_PASSWORD, payload),
     changePassword: (payload) => post(routes.CHANGE_PASSWORD, payload),
     deleteAccount: (payload) => post(routes.DELETE_ACCOUNT, payload),
-    fetchTokens: (payload) => post(routes.TOKENS, payload),
     refreshToken: (payload) => post(routes.REFRESH, payload),
     signOut: (payload) => post(routes.LOGOUT, payload),
   }

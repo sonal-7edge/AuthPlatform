@@ -76,14 +76,8 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
       expiresAt: Date.now() + REFRESH_TTL * 1000,
     })
     const claims = { sub: user.id, email: user.email ?? null, name: user.name }
-    return {
-      id_token: issueJWT(claims, tokenTTL),
-      access_token: issueJWT({ ...claims, scope: 'openid profile email' }, tokenTTL),
-      refresh_token,
-      session_token: issueJWT({ sub: user.id, privileges: ['read', 'write'] }, REFRESH_TTL),
-      token_type: 'Bearer',
-      expires_in: tokenTTL,
-    }
+    // Mirrors the deployed API exactly: camelCase, and no accessToken.
+    return { idToken: issueJWT(claims, tokenTTL), refreshToken: refresh_token }
   }
 
   function challenge(identifier, purpose) {
@@ -164,20 +158,25 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
         const user = users.get(key(identifierOf(payload)))
         // Same message either way — no account enumeration.
         if (!user || user.password !== payload.password) {
-          return [401, { message: 'Incorrect email/phone or password', code: 'INVALID_CREDENTIALS' }]
+          return [401, { message: 'Incorrect credentials', code: 'INVALID_CREDENTIALS' }]
         }
-        challenge(identifierOf(payload), 'auth')
-        return [200, { message: 'Verification code sent' }]
+        if (!user.verified) {
+          return [403, { message: 'Account is not confirmed. Verify it first.', code: 'USER_NOT_CONFIRMED' }]
+        }
+        // Authenticated on credentials alone — there is no OTP step.
+        const { password: _p, ...safe } = user
+        return [200, { ...issueBundle(user), user: safe }]
       }
 
       case '/auth/verify-otp': {
+        // Confirms a new account. Returns a message, NOT tokens — the user
+        // signs in afterwards.
         const failure = consume(payload, 'auth')
         if (failure) return failure
         const user = users.get(key(identifierOf(payload)))
         if (!user) return [404, { message: 'Account not found', code: 'USER_NOT_FOUND' }]
         user.verified = true
-        const { password: _p, ...safe } = user
-        return [200, { ...issueBundle(user), user: safe }]
+        return [200, { message: 'Account confirmed — sign in next' }]
       }
 
       case '/auth/resend-otp': {
@@ -188,7 +187,7 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
       }
 
       case '/auth/forgot-password': {
-        const id = identifierOf(payload)
+        const id = payload.email ?? payload.phone ?? ''
         if (users.has(key(id))) challenge(id, 'password-reset')
         // Always reports success — otherwise it leaks which accounts exist.
         return [200, { message: `If an account exists for ${id}, a reset code has been sent.` }]
@@ -244,12 +243,6 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
         return [200, { message: 'Account deleted successfully' }]
       }
 
-      case '/auth/tokens': {
-        const user = authed()
-        if (!user) return [401, { message: 'You must be signed in', code: 'UNAUTHENTICATED' }]
-        return [200, { tokens: issueBundle(user) }]
-      }
-
       case '/auth/refresh': {
         counts.refresh++
         const presented = payload.refreshToken ?? payload.refresh_token
@@ -266,12 +259,14 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
         }
         // Rotate: the presented token is single-use.
         sessions.delete(presented)
-        return [200, { tokens: issueBundle(user) }]
+        return [200, issueBundle(user) ]
       }
 
       case '/auth/logout': {
-        const presented = payload?.refreshToken ?? payload?.refresh_token
-        if (presented) sessions.delete(presented)
+        const user = authed()
+        if (!user) return [401, { message: 'You must be signed in', code: 'UNAUTHENTICATED' }]
+        // Revokes every refresh token for the user, as the API does.
+        sessions.forEach((s, t) => { if (s.userId === user.id) sessions.delete(t) })
         return [200, { message: 'Signed out' }]
       }
 

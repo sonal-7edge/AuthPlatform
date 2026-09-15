@@ -25,11 +25,7 @@ export default function ForgotPassword({ setFlow }) {
     setFieldError('')
 
     const isEmail = identifierType === IDENTIFIER_TYPE.EMAIL
-    const result = await forgotPassword({
-      identifier: identifier.trim(),
-      identifierType,
-      [isEmail ? 'email' : 'phone']: identifier.trim(),
-    })
+    const result = await forgotPassword({ [isEmail ? 'email' : 'phone']: identifier.trim() })
 
     if (!result.error) {
       setFlow({

@@ -39,7 +39,6 @@ export function useAuth() {
     signOut: client.signOut,
     logout: client.logout,
     // tokens
-    fetchTokens: client.fetchTokens,
     refreshToken: client.refreshToken,
     getTokens: client.getTokens,
     getIdToken: client.getIdToken,

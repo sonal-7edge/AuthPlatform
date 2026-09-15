@@ -81,9 +81,22 @@ export function createTokenManager({
     } catch (error) {
       isRefreshing = false
       flushQueue(error)
-      // The session is unrecoverable — tell every tab, not just this one.
-      broadcaster?.post(BROADCAST_EVENTS.LOGOUT)
-      onForceLogout?.()
+
+      /**
+       * A failed refresh only means the session is dead if the token we hold
+       * is genuinely expired.
+       *
+       * Real APIs overload 401: some answer it for a wrong `currentPassword`
+       * on an authenticated route. The 401 interceptor then refreshes, and if
+       * that refresh is itself failing the user would be logged out by a typo.
+       * Checking expiry first keeps a still-valid session alive and lets the
+       * original error surface instead.
+       */
+      if (isExpired(tokenStore.getIdToken(), 0)) {
+        // Unrecoverable — tell every tab, not just this one.
+        broadcaster?.post(BROADCAST_EVENTS.LOGOUT)
+        onForceLogout?.()
+      }
       throw error
     }
   }

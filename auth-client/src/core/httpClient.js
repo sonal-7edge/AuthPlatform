@@ -23,7 +23,7 @@ function skipsAuthRefresh(url = '') {
  *           single-flight lock lives in tokenManager, so concurrent 401s share
  *           one refresh.
  */
-export function createHttpClient({ baseURL, tokenStore, tokenManager, onForceLogout, headers }) {
+export function createHttpClient({ baseURL, tokenStore, tokenManager, headers }) {
   const instance = axios.create({ baseURL, headers })
 
   instance.interceptors.request.use(async (config) => {
@@ -61,7 +61,8 @@ export function createHttpClient({ baseURL, tokenStore, tokenManager, onForceLog
         originalRequest.headers.Authorization = `Bearer ${newToken}`
         return instance(originalRequest)
       } catch {
-        onForceLogout?.()
+        // tokenManager owns the force-logout decision: it only tears the
+        // session down when the stored token is actually expired.
         return Promise.reject(error)
       }
     }
