@@ -3,9 +3,14 @@
 # edits. Everything here is a public identifier — a Cognito pool id and app
 # client id ship inside the browser bundle anyway.
 #
-# NEVER add CognitoClientSecret to parameter_overrides. This file is in git.
-# If the app client ever gets a secret, pass it at deploy time instead:
-#   npm run build && sam deploy --parameter-overrides ... CognitoClientSecret=...
+# NEVER add CognitoClientSecret or ResetTokenSecret to parameter_overrides.
+# This file is in git. Both are secrets and live in .env (gitignored); pass
+# them at deploy time with `npm run deploy:env`, which sources .env and
+# repeats every parameter below on the command line.
+#
+# Why repeated: a --parameter-overrides on the CLI REPLACES this whole list,
+# it does not merge into it. Anything left off the command line falls back to
+# the template default (or fails, for a parameter with no default).
 #
 # To change any of this, use `npm run deploy:guided` — it re-prompts and
 # rewrites this file. Verify what it wrote before committing: guided saves
@@ -17,8 +22,8 @@ version = 0.1
 region = "ap-south-1"
 
 [default.deploy.parameters]
-stack_name = "cognito-test-stacck"
-s3_prefix = "cognito-test-stacck"
+stack_name = "internal-demo-dev"
+s3_prefix = "internal-demo-dev"
 region = "ap-south-1"
 resolve_s3 = true
 
@@ -38,4 +43,7 @@ image_repositories = []
 # ManageApiGatewayAccount=true: this stack owns the account-wide API Gateway
 # CloudWatch Logs role in ap-south-1. Leave it true. A *second* stack in the
 # same account and region must use false — only one can own that slot.
-parameter_overrides = "ProjectName=\"authplatform\" Environment=\"dev\" ApiStageName=\"v1\" CognitoUserPoolId=\"ap-south-1_IGcrf8tmY\" CognitoUserPoolArn=\"arn:aws:cognito-idp:ap-south-1:575228958582:userpool/ap-south-1_IGcrf8tmY\" CognitoUserPoolClientId=\"2akq9qqevs9qcc5hb7k283mugk\" CorsAllowOrigin=\"*\" LogRetentionInDays=\"1\" LogLevel=\"info\" ThrottlingRateLimit=\"50\" ThrottlingBurstLimit=\"100\" ManageApiGatewayAccount=\"true\""
+#
+# ResetTokenSecret is deliberately absent — it has no template default and is
+# a secret, so this list alone cannot create a stack. Use `npm run deploy:env`.
+parameter_overrides = "ProjectName=\"internal-demo\" Environment=\"dev\" ApiStageName=\"v1\" CognitoUserPoolId=\"ap-south-1_2IovW5ez1\" CognitoUserPoolArn=\"arn:aws:cognito-idp:ap-south-1:575228958582:userpool/ap-south-1_2IovW5ez1\" CognitoUserPoolClientId=\"1mq07g6gh0i9s7cr8lpsta68t7\" CorsAllowOrigin=\"*\" LogRetentionInDays=\"1\" LogLevel=\"info\" ThrottlingRateLimit=\"50\" ThrottlingBurstLimit=\"100\" ManageApiGatewayAccount=\"true\""
