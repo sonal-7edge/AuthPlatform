@@ -2,7 +2,7 @@
 
 Internal CLI tool for standardizing AWS Cognito resource provisioning.
 
-`auth init` collects authentication requirements interactively and generates a validated `auth-config.yaml` file. `auth generate` turns that file into a deployable CloudFormation template. The wizard mirrors the `cognito-panel` web UI step for step, so both tools produce the same shape of config from the same questions.
+`auth generate` runs an interactive wizard that collects authentication requirements, validates them, and writes a deployable CloudFormation template — no manual YAML authoring required. `auth add-client` reopens an existing config/template to add more app clients, `auth validate` checks a hand-edited `auth-config.yaml`, and `auth deploy` ships the generated template to AWS via `sam deploy`. The wizard mirrors the `cognito-panel` web UI step for step, so both tools produce the same shape of config from the same questions.
 
 ---
 
@@ -41,24 +41,14 @@ Run from any project directory:
 
 ```bash
 cd my-project
-auth init
 auth generate
 ```
 
-This generates `auth-config.yaml` and then a `cognito-template.yaml` CloudFormation template in the current directory.
+This runs the wizard and generates a `cognito-template.yaml` CloudFormation template in the current directory.
 
 ---
 
 ## Available Commands
-
-### `auth init`
-
-Starts the interactive wizard. Asks a series of questions and writes `auth-config.yaml` to the current directory (or a custom output directory with `--output`).
-
-```bash
-auth init
-auth init --output ./config
-```
 
 ### `auth generate`
 
@@ -69,18 +59,43 @@ auth generate
 auth generate --output ./infra/cognito-template.yaml
 ```
 
+| Option | Description |
+|---|---|
+| `-o, --output <file>` | Output path for the CloudFormation template (default: `resources/auth/cognito-template.yaml`) |
+
 Exits with code `1` and prints validation errors if the answers fail validation.
 
 Once the template is written, you're asked whether to deploy it immediately. Answering yes prompts for a stack name and optional AWS profile, warns if no AWS credentials are exported in the current shell, and — after a final confirmation — runs `sam deploy` for you. Answering no just leaves the template on disk to deploy later with `auth deploy`.
 
+### `auth add-client <file>`
+
+Adds one or more app clients to an existing `auth-config.yaml` or generated `cognito-template.yaml`, then (re)writes the CloudFormation template with the new client(s) included. Reuses the same "add another app client?" prompt loop as step 6 of the wizard.
+
+```bash
+auth add-client ./auth-config.yaml
+auth add-client ./resources/auth/cognito-template.yaml --output ./resources/auth/cognito-template.yaml
+```
+
+| Option | Description |
+|---|---|
+| `-o, --output <file>` | Output path for the updated CloudFormation template (default: overwrites the template in place, or writes alongside an `auth-config.yaml`) |
+
+If the input file is an `auth-config.yaml`, it's updated and saved back to disk in addition to regenerating the template.
+
 ### `auth deploy <file>`
 
-Deploys a generated `cognito-template.yaml` with `sam deploy`. Requires AWS credentials exported in the shell (or `--profile`/`AWS_PROFILE`) and the AWS SAM CLI installed.
+Deploys a generated `cognito-template.yaml` with `sam deploy`. Requires AWS credentials exported in the shell (or `--profile`/`AWS_PROFILE`) and the AWS SAM CLI installed (auto-installed on Linux if missing).
 
 ```bash
 auth deploy ./resources/auth/cognito-template.yaml --stack-name my-app-users
 auth deploy ./resources/auth/cognito-template.yaml -s my-app-users -p my-profile -r us-east-1
 ```
+
+| Option | Description |
+|---|---|
+| `-s, --stack-name <name>` | CloudFormation stack name (required) |
+| `-p, --profile <name>` | AWS CLI profile to use for credentials |
+| `-r, --region <region>` | AWS region to deploy into (defaults to the profile/env region) |
 
 ### `auth validate [file]`
 
@@ -99,8 +114,9 @@ Shows all commands and options.
 
 ```bash
 auth --help
-auth init --help
 auth generate --help
+auth add-client --help
+auth deploy --help
 auth validate --help
 ```
 
@@ -199,8 +215,8 @@ lambdaTriggers:
 
 ```bash
 # Run in dev mode (no build required)
-npm run dev -- init
 npm run dev -- generate
+npm run dev -- validate
 
 # Type-check
 npx tsc --noEmit
@@ -216,6 +232,9 @@ npm test
 
 # Run tests with coverage
 npm run test:coverage
+
+# Clean the dist/ output
+npm run clean
 ```
 
 ---
@@ -257,4 +276,66 @@ auth-cli/
 ├── package.json
 ├── tsconfig.json
 └── README.md
+```
+
+---
+
+## Publishing (npm)
+
+`auth-cli` is published as the scoped public package [`@akhileshb/auth-cli`](https://www.npmjs.com/package/@akhileshb/auth-cli). `package.json` is already set up for this:
+
+- `bin.auth` → `dist/index.js`, so a global install exposes the `auth` command
+- `files: ["dist"]` → only compiled output ships, never `src/` or `tests/`
+- `publishConfig.access: "public"` → required for a scoped package to publish publicly (scoped packages default to private/paid otherwise)
+- `prepare` runs `npm run build` automatically before packing/publishing
+
+### One-time setup
+
+1. Have an npm account. The package scope (`@<your-npm-username>/...`) must match your own account — since it's your personal scope, no organization or extra setup is needed.
+2. Log in from your machine:
+   ```bash
+   npm login
+   ```
+   This prompts for your username, password, email, and a one-time code if 2FA is enabled — then stores an auth token locally.
+3. Confirm you're logged in as the right account:
+   ```bash
+   npm whoami
+   ```
+
+### Publishing a release
+
+```bash
+cd auth-cli
+
+# 1. Make sure the working tree is clean and dist/ is fresh
+npm run build
+
+# 2. Sanity-check exactly what will be published
+npm pack --dry-run
+
+# 3. Bump the version (writes package.json + creates a git tag)
+npm version patch   # or: minor / major
+
+# 4. Publish
+npm publish
+```
+
+- Use `npm version patch` for fixes, `minor` for backwards-compatible features, `major` for breaking changes (see [semver](https://semver.org)).
+- `npm publish` re-runs `prepare` (and therefore `build`) automatically, so `dist/` is always rebuilt from current `src/` right before publishing.
+- A version number can never be re-published once it's live — bump the version again and republish if something was wrong.
+
+### Verifying the release
+
+```bash
+npm view @akhileshb/auth-cli
+npm install -g @akhileshb/auth-cli
+auth --help
+```
+
+### Publishing from CI (optional)
+
+To publish automatically instead of from a local machine, add an `NPM_TOKEN` (an npm [automation/publish token](https://docs.npmjs.com/creating-and-viewing-access-tokens)) as a GitHub Actions secret, then run `npm publish` in a workflow triggered on a version tag or GitHub release, authenticating via:
+
+```bash
+npm config set //registry.npmjs.org/:_authToken=${NPM_TOKEN}
 ```
