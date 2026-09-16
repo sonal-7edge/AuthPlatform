@@ -28,7 +28,16 @@ const OUT = outFlag !== -1 ? process.argv[outFlag + 1] : '/home/user/auth-client
 const pkg = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8'))
 
 // --- 1. the build must be present ------------------------------------------
-for (const required of ['dist/index.js', 'dist/style.css', 'dist/templates/config.js']) {
+for (const required of [
+  'dist/index.js',
+  'dist/style.css',
+  'dist/bin/postinstall.mjs',
+  'dist/bin/tty.mjs',
+  'dist/templates/auth/config.js',
+  'dist/templates/auth/home.css',
+  'dist/templates/app/App.jsx',
+  'dist/templates/env',
+]) {
   if (!existsSync(join(PKG_DIR, required))) {
     console.error(`Missing ${required}. Run \`npm run build\` first.`)
     process.exit(1)

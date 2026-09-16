@@ -82,7 +82,8 @@ export default function SignUp({ setFlow }) {
   function switchIdentifierType(type) {
     if (error) clearError()
     setIdentifierType(type)
-    setForm((f) => ({ ...f, identifier: '' }))
+    // Names are worth keeping; the identifier and both passwords are not.
+    setForm((f) => ({ ...f, identifier: '', password: '', confirm: '' }))
     setFieldErrors({})
   }
 

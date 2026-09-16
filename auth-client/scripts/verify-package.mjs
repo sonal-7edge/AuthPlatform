@@ -10,6 +10,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { startTestServer } from './test-server.mjs'
 
 const results = []
@@ -571,6 +574,234 @@ await test('an unreachable server yields a network error, not a crash', async ()
   assert.equal(result.code, 'NETWORK_ERROR')
   assert.match(result.message, /Could not reach the server/)
 })
+
+// ── the install / setup contract ────────────────────────────────────────────
+// These guard the promise the README makes: `npm install` creates src/auth/
+// and touches nothing else; every other change is opt-in and reversible.
+
+const scaffold = await import('../dist/bin/scaffold.mjs')
+
+/** A throwaway project that looks enough like a Vite starter. */
+function fakeProject() {
+  const dir = mkdtempSync(join(tmpdir(), 'ac-verify-'))
+  mkdirSync(join(dir, 'src'), { recursive: true })
+  writeFileSync(join(dir, 'src', 'main.jsx'), 'ORIGINAL MAIN\n')
+  writeFileSync(join(dir, 'src', 'App.jsx'), 'ORIGINAL APP\n')
+  writeFileSync(join(dir, 'package.json'), '{"name":"fake"}\n')
+  return dir
+}
+const listing = (dir) => readdirSync(dir, { recursive: true }).sort()
+const temps = []
+const project = () => { const d = fakeProject(); temps.push(d); return d }
+
+await test('install scaffolds src/auth and touches nothing else', () => {
+  const dir = project()
+  const before = listing(dir)
+  scaffold.scaffoldAuth({ project: dir })
+  const added = listing(dir).filter((f) => !before.includes(f))
+  assert.ok(added.length > 5, 'expected src/auth to be populated')
+  assert.ok(
+    added.every((f) => f.startsWith('src/auth')),
+    `install wrote outside src/auth: ${added.filter((f) => !f.startsWith('src/auth')).join(', ')}`
+  )
+  assert.equal(readFileSync(join(dir, 'src', 'App.jsx'), 'utf8'), 'ORIGINAL APP\n')
+  assert.equal(existsSync(join(dir, '.env')), false, 'install must not create .env')
+})
+
+await test('a second install leaves edited screens alone', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  const screen = join(dir, 'src/auth/screens/SignIn.jsx')
+  writeFileSync(screen, '// my edits\n')
+  const { created, skipped } = scaffold.scaffoldAuth({ project: dir })
+  assert.equal(created.length, 0)
+  assert.ok(skipped.length > 5)
+  assert.equal(readFileSync(screen, 'utf8'), '// my edits\n')
+})
+
+await test('--force overwrites an edited screen', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  const screen = join(dir, 'src/auth/screens/SignIn.jsx')
+  writeFileSync(screen, '// my edits\n')
+  scaffold.scaffoldAuth({ project: dir, force: true })
+  assert.notEqual(readFileSync(screen, 'utf8'), '// my edits\n')
+})
+
+await test('writeEnv appends to an existing .env instead of replacing it', () => {
+  const dir = project()
+  writeFileSync(join(dir, '.env'), 'VITE_OTHER=keep-me\n')
+  const result = scaffold.writeEnv({ project: dir })
+  assert.equal(result.action, 'appended')
+  const env = readFileSync(join(dir, '.env'), 'utf8')
+  assert.match(env, /VITE_OTHER=keep-me/, 'clobbered the existing .env')
+  assert.match(env, new RegExp(scaffold.ENV_KEY))
+})
+
+await test('writeEnv leaves an existing VITE_API_BASE_URL untouched', () => {
+  const dir = project()
+  writeFileSync(join(dir, '.env'), `${scaffold.ENV_KEY}=https://mine.example/v1\n`)
+  assert.equal(scaffold.writeEnv({ project: dir }).action, 'skipped')
+  assert.equal(
+    readFileSync(join(dir, '.env'), 'utf8'),
+    `${scaffold.ENV_KEY}=https://mine.example/v1\n`
+  )
+})
+
+await test('the .env template ships a placeholder, never a live URL', () => {
+  const template = readFileSync(join(scaffold.TEMPLATES, 'env'), 'utf8')
+  assert.match(template, /REPLACE-ME/, 'placeholder missing')
+  assert.match(template, /^#/m, 'no comment explaining what to replace')
+})
+
+await test('wire backs up main.jsx and App.jsx before replacing them', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  const { written, backedUp } = scaffold.wireApp({ project: dir })
+  assert.equal(written.length, 2)
+  assert.equal(backedUp.length, 2)
+  assert.equal(readFileSync(join(dir, 'src/main.jsx.bak'), 'utf8'), 'ORIGINAL MAIN\n')
+  assert.equal(readFileSync(join(dir, 'src/App.jsx.bak'), 'utf8'), 'ORIGINAL APP\n')
+  assert.match(readFileSync(join(dir, 'src/main.jsx'), 'utf8'), /auth-client\/style\.css/)
+  assert.match(readFileSync(join(dir, 'src/App.jsx'), 'utf8'), /from '\.\/auth'/)
+})
+
+await test('undo restores the originals byte for byte', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.wireApp({ project: dir })
+  const { restored } = scaffold.undoWiring({ project: dir })
+  assert.equal(restored.length, 2)
+  assert.equal(readFileSync(join(dir, 'src/main.jsx'), 'utf8'), 'ORIGINAL MAIN\n')
+  assert.equal(readFileSync(join(dir, 'src/App.jsx'), 'utf8'), 'ORIGINAL APP\n')
+  assert.equal(existsSync(join(dir, 'src/App.jsx.bak')), false, 'backup left behind')
+  assert.ok(existsSync(join(dir, 'src/auth/index.js')), 'undo must not remove src/auth')
+})
+
+await test('isWired only reports true once App.jsx imports ./auth', () => {
+  const dir = project()
+  assert.equal(scaffold.isWired({ project: dir }), false)
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.wireApp({ project: dir })
+  assert.equal(scaffold.isWired({ project: dir }), true)
+})
+
+await test('the CLI exposes setup, init, env, wire and undo', () => {
+  const cli = readFileSync(new URL('../dist/bin/auth-client.mjs', import.meta.url), 'utf8')
+  for (const command of ['setup', 'init', 'env', 'wire', 'undo']) {
+    assert.match(cli, new RegExp(`case '${command}'`), `missing command: ${command}`)
+  }
+})
+
+await test('postinstall only touches .env or app files after a yes', () => {
+  const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
+  // Both consent-gated calls must sit inside a branch on an affirmative answer,
+  // never at the top level of the script.
+  for (const call of ['writeEnv({ project })', 'wireApp({ project })']) {
+    const at = source.indexOf(call)
+    assert.notEqual(at, -1, `${call} missing`)
+    const guard = source.slice(0, at).lastIndexOf('if (yes)')
+    const bail = source.slice(0, at).lastIndexOf('if (yes === null)')
+    assert.ok(guard !== -1 && guard > bail, `${call} is not gated on an affirmative answer`)
+  }
+  assert.match(source, /catch/, 'postinstall must swallow its own errors')
+  assert.match(source, /exit\(0\)|process\.exit\(0\)/, 'postinstall must always exit 0')
+})
+
+await test('a fresh project reports every step pending', () => {
+  const dir = project()
+  const status = scaffold.stepStatus({ project: dir })
+  assert.deepEqual(status, { auth: 'pending', env: 'pending', wire: 'pending' })
+  assert.equal(scaffold.nextStep({ project: dir }), 'auth')
+})
+
+await test('setup interrupted at .env resumes at .env, not from the start', () => {
+  const dir = project()
+  // What an install that got as far as the .env question leaves behind.
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.recordStep({ project: dir, step: 'auth', status: 'done' })
+
+  const status = scaffold.stepStatus({ project: dir })
+  assert.equal(status.auth, 'done', 'the finished step must not be redone')
+  assert.equal(status.env, 'pending')
+  assert.equal(scaffold.nextStep({ project: dir }), 'env', 'must resume at env')
+})
+
+await test('an answered step is never asked again', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.writeEnv({ project: dir })
+  scaffold.recordStep({ project: dir, step: 'env', status: 'done' })
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'done')
+  assert.equal(scaffold.nextStep({ project: dir }), 'wire')
+})
+
+await test('a declined step is remembered, so re-running does not nag', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.recordStep({ project: dir, step: 'env', status: 'declined' })
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'declined')
+  assert.equal(scaffold.nextStep({ project: dir }), 'wire', 'declined must not block the next step')
+})
+
+await test('the filesystem overrides a stale state file', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  // Claim nothing is done while the work is visibly present.
+  writeFileSync(join(dir, scaffold.STATE_FILE), JSON.stringify({ steps: {} }))
+  scaffold.writeEnv({ project: dir })
+  scaffold.wireApp({ project: dir })
+  const status = scaffold.stepStatus({ project: dir })
+  assert.deepEqual(status, { auth: 'done', env: 'done', wire: 'done' })
+})
+
+await test('deleting the state file does not re-run completed steps', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.writeEnv({ project: dir })
+  rmSync(join(dir, scaffold.STATE_FILE), { force: true })
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'done')
+})
+
+await test('a corrupt state file degrades instead of throwing', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  writeFileSync(join(dir, scaffold.STATE_FILE), 'not json {{{')
+  assert.doesNotThrow(() => scaffold.stepStatus({ project: dir }))
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'pending')
+})
+
+await test('the state file lives inside src/auth, not the project root', () => {
+  assert.match(scaffold.STATE_FILE, /^src\/auth\//)
+})
+
+await test('postinstall prompts over /dev/tty and never hangs', () => {
+  const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
+  const tty = readFileSync(new URL('../dist/bin/tty.mjs', import.meta.url), 'utf8')
+  assert.match(source, /openTTY/, 'postinstall must go through the tty helper')
+  assert.match(tty, /\/dev\/tty/, 'npm pipes stdio — the prompt must use the controlling terminal')
+  assert.match(tty, /setTimeout/, 'an unanswered prompt must time out, not wedge the install')
+  assert.match(tty, /process\.env\.CI/, 'CI must never be prompted')
+  assert.match(source, /exit\(0\)/, 'postinstall must always exit 0')
+})
+
+await test('the generated home page shows session state and builds on the theme', () => {
+  const app = readFileSync(join(scaffold.TEMPLATES, 'app/App.jsx'), 'utf8')
+  const css = readFileSync(join(scaffold.TEMPLATES, 'auth/home.css'), 'utf8')
+  for (const bit of ['expiresIn', 'decodeJWT', 'force-refresh', 'ChangePassword', 'DeleteAccount']) {
+    assert.match(app, new RegExp(bit), `home page lost ${bit}`)
+  }
+  assert.match(css, /--ac-accent/, 'home page styling should reuse the library theme variables')
+})
+
+await test('the .env template carries no example URL', () => {
+  const template = readFileSync(join(scaffold.TEMPLATES, 'env'), 'utf8')
+  assert.doesNotMatch(template, /Example:/, 'the example line was removed on purpose')
+  const live = template.split('\n').filter((l) => l.includes('execute-api') && !l.includes('REPLACE-ME'))
+  assert.deepEqual(live, [], `no live URL may ship: ${live.join(' | ')}`)
+})
+
+temps.forEach((dir) => rmSync(dir, { recursive: true, force: true }))
 
 // ── report ──────────────────────────────────────────────────────────────────
 

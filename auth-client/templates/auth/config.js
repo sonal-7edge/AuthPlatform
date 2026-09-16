@@ -20,6 +20,15 @@ if (!API_BASE_URL) {
   )
 }
 
+// The scaffolded .env ships a placeholder. Catch it here rather than letting
+// every request quietly fail against a host that does not exist.
+if (API_BASE_URL.includes('REPLACE-ME')) {
+  throw new Error(
+    'VITE_API_BASE_URL is still the placeholder from `auth-client init`. ' +
+    'Set it to your authentication API in .env and restart the dev server.'
+  )
+}
+
 export const authConfig = {
   baseURL: API_BASE_URL,
 

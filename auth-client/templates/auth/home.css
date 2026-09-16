@@ -1,0 +1,124 @@
+/**
+ * Styling for the generated home page (src/App.jsx).
+ *
+ * Deliberately plain CSS, and deliberately built on the library's own theme
+ * variables — recolour the auth screens with applyTheme() and this follows
+ * along. Delete it with the home page when you build your own.
+ */
+
+body {
+  margin: 0;
+  background: rgb(var(--ac-bg));
+  color: rgb(var(--ac-fg));
+  font-family: var(--ac-font);
+}
+
+.page {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2.5rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.page header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.page h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.api {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: rgb(var(--ac-muted));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.card {
+  background: rgb(var(--ac-surface));
+  border: 1px solid rgb(var(--ac-border));
+  border-radius: var(--ac-radius-lg);
+  padding: 1.25rem;
+}
+
+.card h2 {
+  margin: 0 0 0.875rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgb(var(--ac-muted));
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+dt { color: rgb(var(--ac-muted)); }
+
+dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+/* Time-to-live readout. Turns red once the proactive refresh window opens. */
+.ttl {
+  padding: 0.625rem 0.75rem;
+  margin-bottom: 1rem;
+  border-radius: var(--ac-radius);
+  background: rgb(var(--ac-subtle));
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ttl.warn {
+  background: rgb(var(--ac-danger-surface));
+  color: rgb(var(--ac-danger));
+}
+
+.page button {
+  height: 2.25rem;
+  padding: 0 0.875rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: rgb(var(--ac-accent-fg));
+  background: rgb(var(--ac-accent));
+  border: 1px solid transparent;
+  border-radius: var(--ac-radius);
+  cursor: pointer;
+  transition: background-color 0.15s, opacity 0.15s;
+}
+
+.page button:hover:not(:disabled) { background: rgb(var(--ac-accent-hover)); }
+.page button:disabled { opacity: 0.5; cursor: not-allowed; }
+.page button.danger { background: rgb(var(--ac-danger)); color: #fff; }
+.page button.danger:hover:not(:disabled) { opacity: 0.9; }
+
+.page button.ghost {
+  background: transparent;
+  color: rgb(var(--ac-fg));
+  border-color: rgb(var(--ac-border-strong));
+}
+
+.page button.ghost:hover:not(:disabled) { background: rgb(var(--ac-subtle)); }
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}

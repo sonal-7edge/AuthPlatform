@@ -85,20 +85,23 @@ function banner(name) {
 
 // Always regenerated: templates/ copied verbatim, plus src/ui/ transformed.
 rmSync(OUT, { recursive: true, force: true })
-mkdirSync(join(OUT, 'screens'), { recursive: true })
+// templates/auth -> the folder scaffolded into the project
+// templates/app  -> optional wiring for main.jsx / App.jsx
+// templates/env  -> the block merged into .env
+mkdirSync(join(OUT, 'auth', 'screens'), { recursive: true })
 cpSync(STATIC, OUT, { recursive: true })
 
 // --- screens ---------------------------------------------------------------
 for (const screen of SCREENS) {
   const source = readFileSync(join(ROOT, 'src/ui/screens', `${screen}.jsx`), 'utf8')
-  writeFileSync(join(OUT, 'screens', `${screen}.jsx`), banner(screen) + rewriteImports(source))
+  writeFileSync(join(OUT, 'auth', 'screens', `${screen}.jsx`), banner(screen) + rewriteImports(source))
 }
 
 // --- AuthFlow: keep ./screens/* relative so it drives the ejected copies ----
 const authFlow = readFileSync(join(ROOT, 'src/ui/AuthFlow.jsx'), 'utf8')
 writeFileSync(
-  join(OUT, 'AuthFlow.jsx'),
+  join(OUT, 'auth', 'AuthFlow.jsx'),
   banner('AuthFlow') + rewriteImports(authFlow, (s) => s.startsWith('./screens/'))
 )
 
-console.log(`dist/templates rebuilt: ${SCREENS.length} screens + AuthFlow + static config`)
+console.log(`dist/templates rebuilt: ${SCREENS.length} screens + AuthFlow + auth/app/env templates`)

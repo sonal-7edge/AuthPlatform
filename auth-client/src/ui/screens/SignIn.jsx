@@ -54,7 +54,9 @@ export default function SignIn({ setFlow, flow, onAuthenticated }) {
   function switchIdentifierType(type) {
     if (error) clearError()
     setIdentifierType(type)
-    setForm((f) => ({ ...f, identifier: '' }))
+    // Clear the whole form: switching identity method restarts sign-in, and a
+    // password left behind would be submitted against a different identifier.
+    setForm({ identifier: '', password: '' })
     setFieldErrors({})
   }
 

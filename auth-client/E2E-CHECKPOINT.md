@@ -6,6 +6,23 @@
 
 Status: `—` not run · `PASS` · `FAIL` · `BLOCKED`
 
+**Last full run** 2026-09-16 — 71/71 browser checks pass, plus 59/59 package
+assertions (`npm run verify`). The four `BLOCKED` rows below are all downstream
+of finding 1 and are server-side; nothing in the library is failing.
+
+| Suite | Result |
+|---|---|
+| `run.mjs` — live API journey | 15/15 |
+| `screens-a/b/c.mjs` — every screen, field by field | 33/33 |
+| `bugfix.mjs` — error-clearing regressions | 5/5 |
+| `bug2.mjs` — identifier-switch clears credentials | 4/4 |
+| `audit.mjs` — double-submit, Enter, aria-busy, trimming | 5/5 |
+| `home.mjs` — the generated home page | 9/9 |
+| `npm run verify` — artifact, install contract, resume logic | 59/59 |
+
+All browser suites run against a **clean install of the packed artifact**, using
+the shipped `App.jsx` template (plus a `?screen=` harness for isolating screens).
+
 ---
 
 ## Contract deltas found in the swagger
@@ -107,9 +124,57 @@ library was written against a different assumption.
 | # | Check | Status | Notes |
 |---|---|---|---|
 | H1 | Fresh Vite app, package installs | PASS | fresh `npm create vite`, package installed from the packed repo artifact |
-| H2 | `src/auth/` + `.env` auto-scaffolded | PASS | 10 files + .env, no mock flag |
+| H2 | `src/auth/` scaffolded by the install | PASS | 11 files, and **nothing outside `src/auth/`** |
 | H3 | Production build succeeds | PASS | production build clean |
 | H4 | No console or page errors across the run | PASS | no console or page errors across the run |
+
+---
+
+## I · Install & setup flow
+
+Cold-run against a fresh `npm create vite` app, package installed from the
+packed dist repo.
+
+| # | Check | Status | Notes |
+|---|---|---|---|
+| I1 | `npm install` writes `src/auth/` only | PASS | `.env`, `main.jsx`, `App.jsx` untouched; only `package.json`/`package-lock.json` change, by npm itself |
+| I2 | `src/auth/NEXT-STEPS.txt` left as the reminder | PASS | npm hides postinstall output, so the note goes on disk |
+| I3 | `setup` prompts before `.env` | PASS | declining prints the block to paste by hand |
+| I4 | `.env` is **appended**, never replaced | PASS | pre-existing `VITE_OTHER=keep-me` survived |
+| I5 | `.env` ships a `REPLACE-ME` placeholder + comment | PASS | no live URL baked into the template |
+| I6 | An existing `VITE_API_BASE_URL` is left alone | PASS | re-running `setup` is a no-op |
+| I7 | `setup` prompts before wiring, defaults to **no** | PASS | declining prints both files to paste |
+| I8 | `wire` backs up `main.jsx` + `App.jsx` as `.bak` | PASS | originals preserved byte for byte |
+| I9 | `undo` restores both originals | PASS | byte-identical; `src/auth/` deliberately kept |
+| I10 | Re-running `setup` does not clobber existing wiring | PASS | detects `App.jsx` already importing `./auth` |
+| I11 | Ctrl+C / Ctrl+D at a prompt exits cleanly | PASS | was a raw Node stack trace — fixed; the step stays pending, not declined |
+| I12 | Non-TTY (CI, piped) does not hang | PASS | skips the prompt and says so; `--yes` accepts everything |
+| I13 | Wired app builds and signs in end to end | PASS | no sign-in flash on reload |
+| I14 | `npm install` prompts over `/dev/tty` | PASS | npm pipes stdio, so the question goes to the controlling terminal |
+| I15 | An unanswered install prompt times out | PASS | 30s, changes nothing, install still completes; it then stops asking, so the delay is capped at 30s |
+| I16 | No terminal / `CI=1` → no prompt | PASS | falls back to `NEXT-STEPS.txt` |
+| I17 | Interrupted at `.env`, next run resumes at `.env` | PASS | `auth: done` recorded, `env` left pending |
+| I18 | Answered steps are never re-asked | PASS | `Resuming — 1 step left: wire` |
+| I19 | A declined step is remembered | PASS | not re-asked; `setup --all` re-offers it |
+| I20 | Deleting the progress record is safe | PASS | state re-derived from the files; nothing re-runs |
+| I21 | A corrupt progress record degrades | PASS | treated as empty, no throw |
+| I22 | **Re-installing does NOT resume** | **KNOWN LIMIT** | npm prints `up to date` and runs no hook, `--force` included — resume via `npx auth-client setup` |
+
+---
+
+## J · Generated home page
+
+| # | Check | Status | Notes |
+|---|---|---|---|
+| J1 | Sign-in lands on the generated home page | PASS | `Signed in as nishan.kumar+1@7edge.com` |
+| J2 | Shows the API base URL in use | PASS | read from `VITE_API_BASE_URL` |
+| J3 | idToken expiry counts down live | PASS | 3600s → 3597s over 3s |
+| J4 | Decoded JWT claims + truncated tokens | PASS | `token_use=id`, `accessToken` renders `null` as expected |
+| J5 | Force refresh is wired | PASS | fires `/auth/refresh`; session survives its 401 (finding 1) |
+| J6 | Change password / Delete account open and return | PASS | both reachable from the home page |
+| J7 | Themed, not unstyled | PASS | card `rgb(255,255,255)`, radius 12px from the theme variables |
+| J8 | Log out returns to sign-in | PASS | storage cleared |
+| J9 | No unexpected console errors | PASS | only the known `/auth/refresh` 401 |
 
 ---
 
