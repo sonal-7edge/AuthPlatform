@@ -93,6 +93,15 @@ export function createAuthClient(config = {}) {
     return () => listeners.delete(listener)
   }
 
+  /**
+   * Dismisses the error on state. Errors otherwise live until the next action
+   * starts, so a failure from one screen would still be showing after the user
+   * navigates away or starts correcting the field that caused it.
+   */
+  function clearError() {
+    setState({ error: null })
+  }
+
   /** Re-reads storage into state — used after another tab changes the session. */
   function syncFromStorage() {
     setState({
@@ -153,7 +162,7 @@ export function createAuthClient(config = {}) {
   })
 
   backend = createHttpBackend(
-    createHttpClient({ baseURL, headers, tokenStore, tokenManager }),
+    createHttpClient({ baseURL, headers, tokenStore, tokenManager, endpoints }),
     { endpoints }
   )
 
@@ -310,6 +319,7 @@ export function createAuthClient(config = {}) {
     // state
     getState,
     subscribe,
+    clearError,
     // session
     signUp,
     signIn,

@@ -16,7 +16,7 @@ import {
 } from '../validation'
 
 export default function SignUp({ setFlow }) {
-  const { signUp, isLoading, error } = useAuth()
+  const { signUp, isLoading, error, clearError } = useAuth()
 
   const [identifierType, setIdentifierType] = useState(IDENTIFIER_TYPE.EMAIL)
   const [form, setForm] = useState({
@@ -72,9 +72,15 @@ export default function SignUp({ setFlow }) {
     }
   }
 
-  const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
+  const set = (key) => (event) => {
+    if (error) clearError()
+    // Drop this field's validation error as soon as it is edited.
+    setFieldErrors((errors) => (errors[key] ? { ...errors, [key]: '' } : errors))
+    setForm((f) => ({ ...f, [key]: event.target.value }))
+  }
 
   function switchIdentifierType(type) {
+    if (error) clearError()
     setIdentifierType(type)
     setForm((f) => ({ ...f, identifier: '' }))
     setFieldErrors({})

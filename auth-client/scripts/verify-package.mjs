@@ -339,19 +339,38 @@ await test('getValidToken leaves a healthy token alone', async () => {
   assert.equal(await auth.getValidToken(), initial, 'must not refresh a token that is still valid')
 })
 
-await test('a 401 triggers one refresh and replays the request', async () => {
+await test('a 401 on a token-only route refreshes once and replays', async () => {
   const { auth } = await signedIn({ email: 'retry@example.com' })
   const beforeToken = auth.getIdToken()
 
-  // The server rejects the next change-password call exactly once.
-  server.expireNext('/auth/change-password')
+  // logout is Bearer-authenticated and carries no credentials, so a 401 from
+  // it can only mean the token was rejected — exactly the clock-skew and
+  // server-side-revocation case the retry exists for.
+  server.expireNext('/auth/logout')
   const before = server.counts.refresh
 
-  const result = await auth.changePassword({ currentPassword: PASSWORD, newPassword: 'AfterRetry123!' })
+  const result = await auth.logout()
 
   assert.equal(result.error, false, `the retry should have succeeded: ${result.message}`)
   assert.equal(server.counts.refresh - before, 1, 'expected exactly one refresh')
-  assert.notEqual(auth.getIdToken(), beforeToken, 'the replayed request should use a new token')
+  assert.notEqual(beforeToken, null)
+})
+
+await test('a 401 from a password-carrying route does NOT refresh', async () => {
+  const { auth } = await signedIn({ email: 'nopointless@example.com' })
+
+  // This API answers 401 for a wrong currentPassword. Refreshing there would
+  // spend a round-trip and rotate a good session because of a typo.
+  const before = server.counts.refresh
+  const result = await auth.changePassword({
+    currentPassword: 'definitely-wrong', newPassword: 'Whatever12345!',
+  })
+
+  assert.equal(result.error, true)
+  assert.equal(server.counts.refresh - before, 0,
+    'a wrong password must not trigger a token refresh')
+  assert.equal(auth.getState().isAuthenticated, true, 'the session must survive')
+  assert.equal(result.code, 'CURRENT_PASSWORD_INVALID', 'the real error should surface')
 })
 
 await test('authenticated routes carry a Bearer token; pre-auth routes do not', async () => {
@@ -466,6 +485,28 @@ await test('logout clears storage and revokes the refresh token server-side', as
 
   const reuse = await auth.__backend.refreshToken({ refreshToken })
   assert.equal(reuse.error, true, 'the refresh token should be revoked on logout')
+})
+
+await test('clearError() dismisses a surfaced error', async () => {
+  const auth = client()
+
+  const failed = await auth.signIn({ email: 'nobody@example.com', password: 'whatever1' })
+  assert.equal(failed.error, true)
+  assert.equal(auth.getState().error, failed.message, 'the error should be on state')
+
+  auth.clearError()
+  assert.equal(auth.getState().error, null, 'clearError() left the error in place')
+})
+
+await test('clearError notifies subscribers so the UI re-renders', async () => {
+  const auth = client()
+  await auth.signIn({ email: 'nobody@example.com', password: 'whatever1' })
+
+  const seen = []
+  auth.subscribe((state) => seen.push(state.error))
+  auth.clearError()
+
+  assert.deepEqual(seen, [null], 'subscribers must be told, or the banner stays on screen')
 })
 
 // ── 5. State, storage and errors ────────────────────────────────────────────

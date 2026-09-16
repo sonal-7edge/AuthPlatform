@@ -9,7 +9,7 @@ import { IDENTIFIER_TYPE, OTP_LENGTH, OTP_PURPOSE } from '../../core/constants'
 const RESEND_SECONDS = 60
 
 export default function OtpVerify({ flow, setFlow }) {
-  const { verifyOtp, verifyResetOtp, resendOtp, isLoading, error } = useAuth()
+  const { verifyOtp, verifyResetOtp, resendOtp, isLoading, error, clearError } = useAuth()
   const { pendingIdentifier, identifierType, otpPurpose } = flow
 
   const [digits, setDigits] = useState(() => Array(OTP_LENGTH).fill(''))
@@ -69,6 +69,8 @@ export default function OtpVerify({ flow, setFlow }) {
   )
 
   function handleChange(index, rawValue) {
+    // Retyping the code dismisses the previous "incorrect code" error.
+    if (error) clearError()
     const char = rawValue.replace(/\D/g, '').slice(-1)
     const next = [...digits]
     next[index] = char

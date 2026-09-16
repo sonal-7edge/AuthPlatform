@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '../react/useAuth'
 import SignIn from './screens/SignIn'
 import SignUp from './screens/SignUp'
 import OtpVerify from './screens/OtpVerify'
@@ -18,6 +19,7 @@ import { IDENTIFIER_TYPE, OTP_PURPOSE } from '../core/constants'
  * app routes instead.
  */
 export default function AuthFlow({ initialScreen = AUTH_SCREENS.SIGN_IN, onAuthenticated }) {
+  const { clearError } = useAuth()
   const [flow, setFlowState] = useState({
     screen: initialScreen,
     pendingIdentifier: null,
@@ -28,6 +30,9 @@ export default function AuthFlow({ initialScreen = AUTH_SCREENS.SIGN_IN, onAuthe
   })
 
   function setFlow(patch) {
+    // Changing screen dismisses the previous screen's error — otherwise a
+    // failed sign-in is still showing after the user switches to sign-up.
+    if (patch.screen && patch.screen !== flow.screen) clearError()
     // A one-shot notice (e.g. "account verified") must not survive the next
     // navigation, so clear it unless this patch is the one setting it.
     setFlowState((f) => ({ ...f, notice: null, ...patch }))

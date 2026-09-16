@@ -8,7 +8,7 @@ import { AUTH_SCREENS } from '../constants'
 import { MIN_PASSWORD_LENGTH, validateConfirmation, validatePassword } from '../validation'
 
 export default function ResetPassword({ flow, setFlow }) {
-  const { resetPassword, isLoading, error } = useAuth()
+  const { resetPassword, isLoading, error, clearError } = useAuth()
   const { resetToken } = flow
 
   const [form, setForm] = useState({ password: '', confirm: '' })
@@ -46,7 +46,11 @@ export default function ResetPassword({ flow, setFlow }) {
     }
   }
 
-  const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
+  const set = (key) => (event) => {
+    if (error) clearError()
+    setFieldErrors((errors) => (errors[key] ? { ...errors, [key]: '' } : errors))
+    setForm((f) => ({ ...f, [key]: event.target.value }))
+  }
 
   return (
     <AuthCard title="Set a new password" subtitle="Choose a password you haven't used before">
