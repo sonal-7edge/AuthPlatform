@@ -129,7 +129,7 @@ await test('baseURL is required', () => {
   // Without an in-memory fallback, a missing baseURL would silently send every
   // request to the current origin. Fail loudly instead.
   assert.throws(() => createAuthClient({ crossTab: false, storage: memoryStorage() }),
-    /requires a baseURL/)
+    /VITE_API_BASE_URL|pass it directly/)
 })
 
 await test('endpoints match the backend contract exactly', () => {
@@ -693,19 +693,18 @@ await test('the CLI exposes setup, init, env, wire and undo', () => {
   }
 })
 
-await test('postinstall only touches .env or app files after a yes', () => {
+await test('postinstall never touches .env or app files, and never blocks', () => {
   const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
-  // Both consent-gated calls must sit inside a branch on an affirmative answer,
-  // never at the top level of the script.
-  for (const call of ['writeEnv({ project })', 'wireApp({ project })']) {
-    const at = source.indexOf(call)
-    assert.notEqual(at, -1, `${call} missing`)
-    const guard = source.slice(0, at).lastIndexOf('if (yes)')
-    const bail = source.slice(0, at).lastIndexOf('if (yes === null)')
-    assert.ok(guard !== -1 && guard > bail, `${call} is not gated on an affirmative answer`)
-  }
-  assert.match(source, /catch/, 'postinstall must swallow its own errors')
-  assert.match(source, /exit\(0\)|process\.exit\(0\)/, 'postinstall must always exit 0')
+  // Strip comments first — this file *explains* why it does not prompt, and
+  // that prose would otherwise trip the checks below.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  assert.doesNotMatch(code, /writeEnv/, 'postinstall must not write .env')
+  assert.doesNotMatch(code, /wireApp/, 'postinstall must not rewrite app files')
+  // It must not wait on input either: npm is also reading that terminal, so a
+  // prompt here loses the race and stalls the install having asked nothing.
+  assert.doesNotMatch(code, /\/dev\/tty|createInterface|rl\.question/, 'postinstall must not prompt')
+  assert.match(code, /catch/, 'postinstall must swallow its own errors')
+  assert.match(code, /exit\(0\)|process\.exit\(0\)/, 'postinstall must always exit 0')
 })
 
 await test('a fresh project reports every step pending', () => {
@@ -775,14 +774,57 @@ await test('the state file lives inside src/auth, not the project root', () => {
   assert.match(scaffold.STATE_FILE, /^src\/auth\//)
 })
 
-await test('postinstall prompts over /dev/tty and never hangs', () => {
-  const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
-  const tty = readFileSync(new URL('../dist/bin/tty.mjs', import.meta.url), 'utf8')
-  assert.match(source, /openTTY/, 'postinstall must go through the tty helper')
-  assert.match(tty, /\/dev\/tty/, 'npm pipes stdio — the prompt must use the controlling terminal')
-  assert.match(tty, /setTimeout/, 'an unanswered prompt must time out, not wedge the install')
-  assert.match(tty, /process\.env\.CI/, 'CI must never be prompted')
-  assert.match(source, /exit\(0\)/, 'postinstall must always exit 0')
+await test('the generated folder is self-contained', () => {
+  const files = readdirSync(join(scaffold.TEMPLATES, 'auth'), { recursive: true })
+    .filter((f) => /\.(jsx?|css)$/.test(f))
+  assert.ok(files.length >= 18, `expected screens + components locally, got ${files.length}`)
+
+  // Only the auth engine may come from the package. Everything visual — the
+  // screens AND the primitives they are built from — has to be local, or a
+  // project cannot restyle without forking.
+  const allowed = new Set(["'@7edge/auth-client'", "'@7edge/auth-client/config'"])
+  const offenders = []
+  for (const file of files) {
+    const source = readFileSync(join(scaffold.TEMPLATES, 'auth', file), 'utf8')
+    for (const [, clause, spec] of source.matchAll(/import\s+([^;]+?)\s+from\s+('[^']+')/g)) {
+      if (!allowed.has(spec)) continue
+      const names = clause.replace(/[{}]/g, '').split(',').map((n) => n.trim()).filter(Boolean)
+      const extra = names.filter((n) => n !== 'useAuth')
+      if (extra.length) offenders.push(`${file}: ${extra.join(', ')}`)
+    }
+  }
+  assert.deepEqual(offenders, [], `these should be local files, not package imports — ${offenders.join(' | ')}`)
+  return `${files.length} local files, only useAuth from the package`
+})
+
+await test('no config file is dumped into the project', () => {
+  const files = readdirSync(join(scaffold.TEMPLATES, 'auth'), { recursive: true })
+  assert.ok(!files.includes('config.js'), 'config.js must live in the package, not src/auth')
+  const barrel = readFileSync(join(scaffold.TEMPLATES, 'auth/index.js'), 'utf8')
+  assert.match(barrel, /from '@7edge\/auth-client\/config'/, 'the barrel should pull config from the package')
+})
+
+await test('the config subpath ships unbundled so the consumer resolves the env', () => {
+  // Bundling it would let OUR build substitute import.meta.env and bake in an
+  // empty string. It has to reach the consumer as plain source.
+  const config = readFileSync(new URL('../dist/config.js', import.meta.url), 'utf8')
+  assert.match(config, /import\.meta\.env\?\.VITE_API_BASE_URL/, 'the env read was substituted away')
+  const root = readFileSync(new URL('../dist/index.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(root, /VITE_API_BASE_URL \?\?/, 'config must not be bundled into the root entry')
+})
+
+await test('a placeholder base URL fails loudly instead of silently', () => {
+  assert.throws(
+    () => createAuthClient({ baseURL: 'https://REPLACE-ME.execute-api.ap-south-1.amazonaws.com/v1' }),
+    /still the placeholder/
+  )
+  assert.throws(() => createAuthClient({ baseURL: '' }), /VITE_API_BASE_URL/)
+})
+
+await test('generated files carry a one-line note, not an essay', () => {
+  const screen = readFileSync(join(scaffold.TEMPLATES, 'auth/screens/SignIn.jsx'), 'utf8')
+  const header = screen.split('\n').findIndex((l) => l.startsWith('import'))
+  assert.ok(header <= 1, `${header} lines of preamble before the first import`)
 })
 
 await test('the generated home page shows session state and builds on the theme', () => {

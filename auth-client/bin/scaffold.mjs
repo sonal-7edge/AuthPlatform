@@ -214,6 +214,19 @@ export function stepStatus({ project }) {
   )
 }
 
+/**
+ * Removes the reminder file once there is nothing left to remind about, so a
+ * finished project is not left with stale instructions in it.
+ */
+export function clearNote({ project }) {
+  const note = join(project, 'src/auth/NEXT-STEPS.txt')
+  if (!existsSync(note)) return false
+  const status = stepStatus({ project })
+  if (STEPS.some((step) => status[step] === 'pending')) return false
+  unlinkSync(note)
+  return true
+}
+
 /** The first step still awaiting an answer, or null when there is nothing left. */
 export function nextStep({ project }) {
   const status = stepStatus({ project })

@@ -4,6 +4,16 @@
  * Deliberately plain CSS, and deliberately built on the library's own theme
  * variables — recolour the auth screens with applyTheme() and this follows
  * along. Delete it with the home page when you build your own.
+ *
+ * This is also the right place to restyle the scaffolded components. Their
+ * Tailwind classes come from a PRECOMPILED stylesheet, so a new utility such
+ * as `bg-purple-600` will not exist and renders unstyled. Plain CSS here
+ * always works:
+ *
+ *   .my-brand-button { background: rgb(147 51 234); }
+ *
+ * ...then use `my-brand-button` in components/Button.jsx. Install Tailwind in
+ * your project if you would rather have the full utility set.
  */
 
 body {

@@ -34,7 +34,8 @@
     },
     "./style.css": "./dist/style.css",
     "./ui/style.css": "./dist/style.css",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./config": "./dist/config.js"
   },
   "files": [
     "dist",
@@ -50,7 +51,7 @@
   "scripts": {
     "build:js": "vite build",
     "build:css": "tailwindcss -i ./src/ui/styles.css -o ./dist/style.css --minify",
-    "build": "npm run build:js && npm run build:css && npm run build:templates && npm run build:bin",
+    "build": "npm run build:js && npm run build:css && npm run build:config && npm run build:templates && npm run build:bin",
     "prepare": "npm run build",
     "lint": "eslint .",
     "verify": "node scripts/verify-package.mjs",
@@ -58,7 +59,8 @@
     "postinstall": "node bin/postinstall.mjs",
     "build:bin": "node -e \"require('fs').cpSync('bin','dist/bin',{recursive:true})\"",
     "build:dist-repo": "node scripts/build-dist-repo.mjs",
-    "set-repo": "node scripts/set-repo.mjs"
+    "set-repo": "node scripts/set-repo.mjs",
+    "build:config": "node -e \"require('fs').copyFileSync('src/config.js','dist/config.js')\""
   },
   "peerDependencies": {
     "react": ">=18",

@@ -9,10 +9,11 @@
  *   npx auth-client undo      restore main.jsx / App.jsx from backups
  *   npx auth-client status    what is done, declined or outstanding
  *
- * `npm install` asks the same questions over /dev/tty (see bin/tty.mjs), so
- * this is the path for anyone who skipped them, was in CI, or wants a single
- * step on its own. Both share the progress record in src/auth/.auth-client.json,
- * so setup resumes wherever the install left off — and vice versa.
+ * `npm install` only scaffolds src/auth/ — it cannot ask anything, so every
+ * question lives here. Progress is recorded in src/auth/.auth-client.json as
+ * each answer is given, so `setup` resumes at the step it stopped on rather
+ * than starting over. Note that reinstalling does NOT resume: npm skips
+ * install hooks when nothing changed, so `setup` is the way back in.
  */
 
 import { createInterface } from 'node:readline/promises'
@@ -20,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   scaffoldAuth, writeEnv, wireApp, undoWiring, isWired,
-  recordStep, stepStatus,
+  recordStep, stepStatus, clearNote,
   pkg, c, ENV_KEY, TEMPLATES,
 } from './scaffold.mjs'
 
@@ -184,6 +185,7 @@ async function setup() {
     }
   }
 
+  if (clearNote({ project: PROJECT })) ok('removed src/auth/NEXT-STEPS.txt — nothing outstanding')
   console.log(`\n${c.bold('Done.')} ${c.dim(`Set ${ENV_KEY} in .env, then ${'npm run dev'}.`)}\n`)
 }
 
@@ -239,8 +241,14 @@ const [command] = process.argv.slice(2, 3)
 switch (command) {
   case 'setup': await setup(); break
   case 'init': header(); stepAuth({ force: has('--force'), dir: flagValue('--dir', 'src/auth') }); console.log(''); break
-  case 'env': header(); stepEnv(); console.log(''); break
-  case 'wire': header(); stepWire(); console.log(''); break
+  case 'env':
+    header(); stepEnv()
+    recordStep({ project: PROJECT, step: 'env', status: 'done' })
+    clearNote({ project: PROJECT }); console.log(''); break
+  case 'wire':
+    header(); stepWire()
+    recordStep({ project: PROJECT, step: 'wire', status: 'done' })
+    clearNote({ project: PROJECT }); console.log(''); break
   case 'undo': undo(); break
   case 'status': status(); break
   case undefined: case 'help': case '--help': case '-h': help(); break

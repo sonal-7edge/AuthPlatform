@@ -41,8 +41,18 @@ export function createAuthClient(config = {}) {
 
   if (!baseURL) {
     throw new Error(
-      'createAuthClient requires a baseURL — e.g. createAuthClient({ baseURL: "https://api.example.com/api" }). ' +
-      'Without it every request would go to the current origin.'
+      'No API base URL. Set VITE_API_BASE_URL in .env and restart the dev server — ' +
+      'Vite only reads .env at startup. Or pass it directly: ' +
+      'createAuthClient({ baseURL: "https://api.example.com/v1" }).'
+    )
+  }
+
+  // The scaffolded .env ships a placeholder. Catch it here rather than letting
+  // every request quietly fail against a host that does not exist.
+  if (baseURL.includes('REPLACE-ME')) {
+    throw new Error(
+      'VITE_API_BASE_URL is still the placeholder. Set it to your authentication ' +
+      'API in .env and restart the dev server.'
     )
   }
 

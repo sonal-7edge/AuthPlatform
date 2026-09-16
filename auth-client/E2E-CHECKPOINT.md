@@ -6,7 +6,7 @@
 
 Status: `—` not run · `PASS` · `FAIL` · `BLOCKED`
 
-**Last full run** 2026-09-16 — 71/71 browser checks pass, plus 59/59 package
+**Last full run** 2026-09-16 — 71/71 browser checks pass, plus 63/63 package
 assertions (`npm run verify`). The four `BLOCKED` rows below are all downstream
 of finding 1 and are server-side; nothing in the library is failing.
 
@@ -18,7 +18,7 @@ of finding 1 and are server-side; nothing in the library is failing.
 | `bug2.mjs` — identifier-switch clears credentials | 4/4 |
 | `audit.mjs` — double-submit, Enter, aria-busy, trimming | 5/5 |
 | `home.mjs` — the generated home page | 9/9 |
-| `npm run verify` — artifact, install contract, resume logic | 59/59 |
+| `npm run verify` — artifact, install contract, resume, ejection | 63/63 |
 
 All browser suites run against a **clean install of the packed artifact**, using
 the shipped `App.jsx` template (plus a `?screen=` harness for isolating screens).
@@ -150,15 +150,22 @@ packed dist repo.
 | I11 | Ctrl+C / Ctrl+D at a prompt exits cleanly | PASS | was a raw Node stack trace — fixed; the step stays pending, not declined |
 | I12 | Non-TTY (CI, piped) does not hang | PASS | skips the prompt and says so; `--yes` accepts everything |
 | I13 | Wired app builds and signs in end to end | PASS | no sign-in flash on reload |
-| I14 | `npm install` prompts over `/dev/tty` | PASS | npm pipes stdio, so the question goes to the controlling terminal |
-| I15 | An unanswered install prompt times out | PASS | 30s, changes nothing, install still completes; it then stops asking, so the delay is capped at 30s |
-| I16 | No terminal / `CI=1` → no prompt | PASS | falls back to `NEXT-STEPS.txt` |
+| I14 | `npm install` never prompts or stalls | PASS | ~1s; prompting was tried over `/dev/tty` and **reverted** — npm also reads that terminal, so a real user's keystrokes went to npm and the question timed out having asked nothing |
+| I15 | Install writes only `src/auth/` | PASS | `.env`, `main.jsx`, `App.jsx` untouched |
+| I16 | `NEXT-STEPS.txt` names the outstanding steps | PASS | rewritten each install, removed when nothing is left |
 | I17 | Interrupted at `.env`, next run resumes at `.env` | PASS | `auth: done` recorded, `env` left pending |
 | I18 | Answered steps are never re-asked | PASS | `Resuming — 1 step left: wire` |
 | I19 | A declined step is remembered | PASS | not re-asked; `setup --all` re-offers it |
 | I20 | Deleting the progress record is safe | PASS | state re-derived from the files; nothing re-runs |
 | I21 | A corrupt progress record degrades | PASS | treated as empty, no throw |
 | I22 | **Re-installing does NOT resume** | **KNOWN LIMIT** | npm prints `up to date` and runs no hook, `--force` included — resume via `npx auth-client setup` |
+| I23 | No `config.js` in the project | PASS | moved to `@7edge/auth-client/config`, shipped unbundled so the consumer's Vite resolves `VITE_API_BASE_URL` |
+| I24 | Placeholder base URL throws with the fix in the message | PASS | also covers an empty/missing value |
+| I25 | Generated folder is self-contained | PASS | 20 local files; `useAuth` is the only package import |
+| I26 | Every relative import in the generated tree resolves | PASS | enforced at build time — caught a real break in `validation.js` |
+| I27 | The app template only imports names the barrel exports | PASS | enforced at build time — caught a missing `decodeJWT` |
+| I28 | A local component edit takes effect | PASS | structure/copy/props freely; classes limited to the precompiled set |
+| I29 | A new Tailwind utility in a local component | **KNOWN LIMIT** | `style.css` is precompiled, so `bg-purple-600` renders unstyled — plain CSS in `home.css` works, or install Tailwind |
 
 ---
 

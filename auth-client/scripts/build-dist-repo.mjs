@@ -28,15 +28,25 @@ const OUT = outFlag !== -1 ? process.argv[outFlag + 1] : '/home/user/auth-client
 const pkg = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8'))
 
 // --- 1. the build must be present ------------------------------------------
+// Checked against the generated layout, not a remembered one: a renamed or
+// relocated template must fail here rather than ship the previous build.
 for (const required of [
   'dist/index.js',
+  'dist/index.cjs',
   'dist/style.css',
+  'dist/config.js',
   'dist/bin/postinstall.mjs',
-  'dist/bin/tty.mjs',
-  'dist/templates/auth/config.js',
-  'dist/templates/auth/home.css',
-  'dist/templates/app/App.jsx',
+  'dist/bin/auth-client.mjs',
   'dist/templates/env',
+  'dist/templates/app/App.jsx',
+  'dist/templates/app/main.jsx',
+  'dist/templates/auth/index.js',
+  'dist/templates/auth/AuthFlow.jsx',
+  'dist/templates/auth/constants.js',
+  'dist/templates/auth/validation.js',
+  'dist/templates/auth/home.css',
+  'dist/templates/auth/screens/SignIn.jsx',
+  'dist/templates/auth/components/Button.jsx',
 ]) {
   if (!existsSync(join(PKG_DIR, required))) {
     console.error(`Missing ${required}. Run \`npm run build\` first.`)

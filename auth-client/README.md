@@ -60,40 +60,54 @@ npm install
 npm install github:Nishan666/auth-client
 ```
 
-The install scaffolds `src/auth/` — mandatory, purely additive, no question
-asked — and then **asks** before anything else:
+This scaffolds `src/auth/` and nothing else — mandatory, purely additive, and
+the package's own territory:
 
 ```
-  @7edge/auth-client v0.2.0
-  src/auth/ is in place. 2 optional steps left.
-
-  VITE_API_BASE_URL tells the library which API to call.
-  Create .env? (Y/n) y
-  ✓ created .env — now set VITE_API_BASE_URL to your API URL
-
-  This REPLACES src/main.jsx and src/App.jsx (originals saved as .bak).
-  Wire them up now? (y/N) y
-  ✓ wired src/main.jsx and src/App.jsx
-    undo with: npx auth-client undo
+src/auth/
+  index.js           import auth from one place
+  AuthFlow.jsx       the pre-auth journey
+  screens/           SignIn, SignUp, OtpVerify, ForgotPassword,
+                     ResetPassword, ChangePassword, DeleteAccount
+  components/        AuthCard, Button, FormField, PasswordField,
+                     IdentifierInput, Alert, LoadingSpinner
+  validation.js      the field rules
+  constants.js       screen names, identifier types, OTP settings
+  home.css           styling for the generated home page
 ```
 
-npm runs lifecycle scripts with stdin and stdout piped, so the prompt goes to
-`/dev/tty` — the controlling terminal — instead. Every way that can fail
-degrades to *not asking*, never to hanging:
+**All of it is yours.** The only thing a generated file imports from the
+package is `useAuth` — the auth engine. Every screen, every primitive and
+every string is a local file you can edit or delete. There is no config file:
+`VITE_API_BASE_URL` is read by the package itself.
 
-| Situation | What happens |
-|---|---|
-| No terminal (CI, Docker build, output piped) | no prompt; a note is left in `src/auth/NEXT-STEPS.txt` |
-| `CI=1`, or `AUTH_CLIENT_NO_PROMPT=1` | no prompt |
-| A terminal, but nobody answers | times out after 30s, changes nothing, install finishes |
-| `--ignore-scripts` | nothing at all runs — use `npx auth-client setup` |
+Your `.env`, `main.jsx` and `App.jsx` are **not** touched. The install cannot
+ask: npm hides a lifecycle script's output unless you pass
+`--foreground-scripts`, and it is also reading the terminal itself, so a prompt
+here loses the race and stalls the install having asked nothing. The questions
+live in the next step instead, and the reminder is left on disk as
+`src/auth/NEXT-STEPS.txt`.
 
-### 3. Stopping halfway is fine
+> If your environment disables install scripts (`--ignore-scripts`, some CI
+> setups), even `src/auth/` is skipped. Run `npx auth-client init`.
 
-Every answer is recorded the moment it is given, in
-`src/auth/.auth-client.json`. Quit at the `.env` question and the next run
-picks up exactly there — it will not redo the scaffold or re-ask what you
-already answered.
+### 3. Finish the setup
+
+```bash
+npx auth-client setup
+```
+
+It asks before each of the two steps that touch your files, and prints the
+manual equivalent if you decline:
+
+| Prompt | What it does | Decline and do it yourself |
+|---|---|---|
+| *Create / append `.env`* | adds `VITE_API_BASE_URL` — appended to an existing `.env`, never replacing it | copy the block it prints into `.env` |
+| *Wire them up now?* | rewrites `src/main.jsx` + `src/App.jsx`, saving both as `.bak` first | copy the two files it points at |
+
+**It resumes.** Every answer is recorded in `src/auth/.auth-client.json` the
+moment it is given, so quitting at the `.env` question and running `setup`
+again picks up exactly there:
 
 ```bash
 npx auth-client status
@@ -106,26 +120,15 @@ npx auth-client status
   Resume with npx auth-client setup
 ```
 
-```bash
-npx auth-client setup
-```
-```
-  Resuming — 1 step left: wire
-  · src/auth/ already present
-  · .env already defines VITE_API_BASE_URL — leaving it alone
-  Wire them up now? (y/N)
-```
-
-> **Resume with `npx auth-client setup`, not by reinstalling.** npm only runs
-> an install hook when it actually installs something. Running
-> `npm install github:Nishan666/auth-client` a second time prints
-> `up to date` and runs nothing — not even with `--force`. That is npm's
-> behaviour and a package cannot change it.
-
 A step you *declined* is remembered and not asked again; `setup --all`
 re-offers it. A step you never answered stays pending. The record is a
-convenience, not the source of truth — delete it and the state is re-derived
-from the files themselves, so nothing already done gets run twice.
+convenience, not the source of truth — delete it and state is re-derived from
+the files themselves, so nothing already done runs twice.
+
+> **Resume with `npx auth-client setup`, not by reinstalling.** npm only runs
+> install hooks when it actually installs something. A second
+> `npm install github:Nishan666/auth-client` prints `up to date` and runs
+> nothing — not even with `--force`.
 
 Each step also runs on its own, and the wiring is reversible:
 
@@ -155,30 +158,21 @@ No `.gitignore` edits, no extra dependencies, no scripts added to your
 `package.json`.
 
 <details>
-<summary>What the wiring writes, if you would rather paste it yourself</summary>
+<summary>What the wiring writes</summary>
 
-`src/main.jsx` imports the stylesheet:
+`src/main.jsx` gains one line — the precompiled stylesheet:
 
 ```jsx
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
 import '@7edge/auth-client/style.css'
-import App from './App.jsx'
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode><App /></StrictMode>
-)
 ```
 
 `src/App.jsx` becomes a working home page: it swaps between `<AuthFlow />` and
-your own signed-in area, and ships with a **Session** panel showing the live
-idToken countdown, the decoded JWT claims, and a **Force refresh** button —
-useful while wiring up, and safe to delete once you trust it. `ChangePassword`
-and `DeleteAccount` are plain components dropped into it.
+your signed-in area, and ships a **Session** panel with the live idToken
+countdown, the decoded JWT claims and a **Force refresh** button — useful while
+wiring up, safe to delete once you trust it. `ChangePassword` and
+`DeleteAccount` drop in as plain components.
 
-Both files are in `node_modules/@7edge/auth-client/dist/templates/app/`, and
-the home page's styling is `src/auth/home.css` — plain CSS built on the
-library's theme variables, so `applyTheme()` recolours it too.
+Both files are in `node_modules/@7edge/auth-client/dist/templates/app/`.
 </details>
 
 ### 4. Run
@@ -366,6 +360,37 @@ Tokens: `bg`, `surface`, `border`, `border-strong`, `fg`, `muted`, `subtle`,
 `accent`, `accent-fg`, `accent-hover`, `danger`, `success` (+ `-surface`,
 `-border` variants).
 
+##### Editing the scaffolded components
+
+`src/auth/components/` are your files, and their markup, structure, props and
+copy are freely editable. Their **class names** come with one caveat worth
+knowing before you reach for it.
+
+Those classes are Tailwind utilities, and `style.css` ships *precompiled* —
+it contains only the utilities the library itself uses. So:
+
+| Edit | Result |
+|---|---|
+| Change markup, props, layout structure, copy | works |
+| Swap to another class the library already uses (`bg-ac-danger`) | works |
+| Add your own plain CSS and use that class | works |
+| Add a **new** Tailwind utility (`bg-purple-600`) | **silently does nothing** |
+
+The last row is the trap: nothing errors, the element just renders unstyled.
+Two ways round it —
+
+```css
+/* src/auth/home.css — your file, plain CSS, always works */
+.my-brand-button { background: rgb(147 51 234); }
+```
+
+...then use `my-brand-button` in `components/Button.jsx`. Or install Tailwind
+in your project, at which point every utility is available and the precompiled
+stylesheet becomes redundant.
+
+For recolouring rather than restructuring, the CSS custom properties above are
+the better tool — they need neither.
+
 ### 4. No offline mode
 
 `baseURL` is required and every call goes to your API. There is no in-memory
@@ -450,20 +475,25 @@ Create React App `process.env.REACT_APP_…`, Next.js `process.env.NEXT_PUBLIC_�
 **`src/auth/` was not created.** Install scripts are disabled in your
 environment. Run `npx auth-client init`.
 
-**The install did not ask me anything.** There was no terminal to ask on —
-CI, a Docker build, output piped to a file — or `CI` / `AUTH_CLIENT_NO_PROMPT`
-is set. Check `src/auth/NEXT-STEPS.txt`, then run `npx auth-client setup`.
+**The install did not ask me anything.** It never does — `npm install` only
+scaffolds `src/auth/`. See `src/auth/NEXT-STEPS.txt`, then run
+`npx auth-client setup`.
 
 **Re-installing does not resume.** npm only runs install hooks when it actually
 installs something; a second `npm install github:Nishan666/auth-client` prints
 `up to date` and runs nothing, `--force` included. Use
 `npx auth-client setup` — it reads the same progress record and picks up where
-the install stopped. `npx auth-client status` shows what is outstanding.
+you stopped. `npx auth-client status` shows what is outstanding.
 
 **It asked about a step I already declined.** It should not — a declined step
 is recorded. If `src/auth/.auth-client.json` was deleted, state is re-derived
 from the files, and a decline is indistinguishable from never having asked.
 Harmless: answer no again, or delete the file to start the questions over.
+
+**I edited a scaffolded component and the styling vanished.** You most likely
+added a Tailwind class the precompiled `style.css` does not contain. See
+[Editing the scaffolded components](#editing-the-scaffolded-components) —
+plain CSS in `src/auth/home.css` always works.
 
 **I want my original `main.jsx` / `App.jsx` back.** `npx auth-client undo`
 restores them from the `.bak` files `wire` wrote. If you have since deleted the
@@ -674,12 +704,19 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
   writes the auth folder — the package's own territory — and nothing else
   without consent. It never overwrites existing files and never fails an
   install.
-- **Install-time prompts over `/dev/tty`.** npm pipes a lifecycle script's
-  stdio, so the hook writes to the controlling terminal directly and can ask
-  about `.env` and app wiring during `npm install`. It never blocks: no
-  terminal, `CI=1` or `AUTH_CLIENT_NO_PROMPT=1` skips the question, and an
-  unanswered prompt times out after 30s having changed nothing. When it cannot
-  ask, it leaves `src/auth/NEXT-STEPS.txt`.
+- **A fully ejected `src/auth/`.** The screens' primitives
+  (`components/`), the field rules (`validation.js`) and the UI constants are
+  now local files too, so `useAuth` is the only thing a generated file imports
+  from the package. Restyling or restructuring no longer needs a fork. Note
+  that `style.css` is precompiled: a brand-new Tailwind utility will not exist
+  in it — use plain CSS or install Tailwind. See *Editing the scaffolded
+  components*.
+- **No config file in the project.** `authConfig` and `API_BASE_URL` moved
+  into the package, at `@7edge/auth-client/config`. It ships unbundled, because
+  Vite substitutes `import.meta.env` at build time and bundling it would bake
+  in an empty string instead of reading the consumer's `.env`. A missing or
+  placeholder base URL now throws from `createAuthClient` with the fix in the
+  message.
 - **Resumable setup.** Each answer is recorded in
   `src/auth/.auth-client.json` as it is given, so an interrupted run continues
   from the step it stopped on. A declined step is not re-asked (`setup --all`
@@ -693,7 +730,7 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
 - **Moved to its own repository**, with the package at the root. npm cannot
   install from a subdirectory of a repo, which made `npm i github:…` impossible
   while the library lived inside the AuthPlatform monorepo.
-- `scripts/verify-package.mjs` — 59 assertions run against `dist/`, not `src/`,
+- `scripts/verify-package.mjs` — 63 assertions run against `dist/`, not `src/`,
   covering the backend route contract, the install/setup contract (`.env` is
   appended never replaced, `undo` restores byte for byte) and the resume logic
   (an interrupted step is offered again, a completed one never is).
