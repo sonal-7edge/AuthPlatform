@@ -28,6 +28,19 @@ async function test(name, fn) {
   }
 }
 
+/**
+ * Source with comments removed.
+ *
+ * These files explain their own terminal handling at length, and asserting
+ * "the code does not do X" against prose that *describes* X gives false
+ * failures. Match against code only.
+ */
+function codeOf(relativePath) {
+  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
+
 /** localStorage doesn't exist in Node — the pluggable adapter covers for it. */
 function memoryStorage() {
   const map = new Map()
@@ -71,6 +84,11 @@ function client(config = {}) {
     storage: memoryStorage(),
     ...config,
   })
+}
+
+/** Reads a JWT payload. The test server's tokens are unsigned by design. */
+function decodeClaims(token) {
+  return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString())
 }
 
 /**
@@ -311,6 +329,38 @@ await test('concurrent refreshes share one round-trip (single-flight lock)', asy
   assert.ok(outcomes.every((r) => !r.error), 'every queued caller should resolve successfully')
   assert.equal(new Set(outcomes.map((r) => r.data.idToken)).size, 1,
     'all callers must receive the same new token')
+})
+
+await test('refresh carries cognito:username, so a client-secret pool accepts it', async () => {
+  /**
+   * Regression: /auth/refresh used to send the refresh token alone. Cognito
+   * needs a SECRET_HASH when the app client has a client secret, that hash is
+   * an HMAC over the username, and a refresh token is opaque to the backend —
+   * so the call came back 401 "Incorrect credentials" against a real pool
+   * while every other flow worked. This server rejects a refresh whose
+   * username is missing or wrong, the way Cognito does.
+   */
+  const secretPool = await startTestServer({ requireUsername: true })
+  try {
+    const auth = client({ baseURL: secretPool.baseURL })
+    const email = 'secrethash@example.com'
+    await auth.signUp({ email, password: PASSWORD, firstName: 'Se', lastName: 'Cret' })
+    await auth.verifyOtp({ identifier: email, otp: secretPool.OTP })
+    await auth.signIn({ email, password: PASSWORD })
+
+    const claims = decodeClaims(auth.getTokens().id_token)
+
+    const result = await auth.refreshToken()
+    assert.equal(result.error, false, `refresh was rejected: ${result.message}`)
+
+    const sent = secretPool.lastRefreshBody()
+    assert.equal(sent.username, claims['cognito:username'],
+      'refresh must send the cognito:username claim')
+    assert.notEqual(sent.username, claims.sub,
+      'sub is not the username — hashing it would 401 against a real pool')
+  } finally {
+    await secretPool.close()
+  }
 })
 
 await test('getValidToken refreshes proactively inside the expiry skew', async () => {
@@ -693,18 +743,54 @@ await test('the CLI exposes setup, init, env, wire and undo', () => {
   }
 })
 
-await test('postinstall never touches .env or app files, and never blocks', () => {
-  const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
-  // Strip comments first — this file *explains* why it does not prompt, and
-  // that prose would otherwise trip the checks below.
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+await test('postinstall never reads input and never touches your files', () => {
+  const code = codeOf('../dist/bin/postinstall.mjs')
+
+  // It may WRITE to the terminal — npm hides a hook's stdout, so that is the
+  // only way the notice is seen. It must never READ: the terminal's input
+  // buffer holds escape-sequence replies to shell prompt themes, and consuming
+  // one as an answer made the question cancel itself unprompted.
+  assert.doesNotMatch(code, /openSync\('\/dev\/tty', 'r'\)/, 'the hook must not read the terminal')
+  assert.doesNotMatch(code, /setRawMode|createInterface|spawnSync/, 'the hook must not prompt')
+  assert.match(code, /openSync\('\/dev\/tty', 'w'\)/, 'the notice must reach the terminal npm hides output from')
+
+  // And it must stay inside its own territory.
   assert.doesNotMatch(code, /writeEnv/, 'postinstall must not write .env')
   assert.doesNotMatch(code, /wireApp/, 'postinstall must not rewrite app files')
-  // It must not wait on input either: npm is also reading that terminal, so a
-  // prompt here loses the race and stalls the install having asked nothing.
-  assert.doesNotMatch(code, /\/dev\/tty|createInterface|rl\.question/, 'postinstall must not prompt')
   assert.match(code, /catch/, 'postinstall must swallow its own errors')
-  assert.match(code, /exit\(0\)|process\.exit\(0\)/, 'postinstall must always exit 0')
+  assert.match(code, /exit\(0\)/, 'postinstall must always exit 0')
+
+  // It has to name the command that finishes the job.
+  const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
+  assert.match(source, /npx auth-client setup/, 'the notice must point at the next command')
+})
+
+await test('a cancelled question is left pending, and nothing times out', () => {
+  const cli = codeOf('../dist/bin/auth-client.mjs')
+  assert.match(cli, /createInterface/, 'setup owns the terminal, so readline is the right tool')
+  // One interface for the run: closing one discards input typed ahead.
+  assert.equal([...cli.matchAll(/createInterface\(/g)].length, 1, 'exactly one readline for the whole run')
+  // No deadline on an answer, anywhere.
+  assert.doesNotMatch(cli, /setTimeout/, 'questions must not time out')
+  assert.doesNotMatch(codeOf('../dist/bin/postinstall.mjs'), /setTimeout|timeout:/, 'the install must impose no deadline')
+  // Cancel must be distinguishable from a decline.
+  assert.match(cli, /answer === false/, 'decline must be distinguished from cancelled')
+  assert.match(cli, /status: 'declined'/, 'a decline must be recorded')
+})
+
+await test('no prompt library is shipped to consumers', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.deepEqual(Object.keys(pkg.dependencies ?? {}), ['axios'],
+    'the install no longer prompts, so it needs no prompt library')
+})
+
+await test('setup ends with a summary that covers undo', () => {
+  const cli = readFileSync(new URL('../dist/bin/auth-client.mjs', import.meta.url), 'utf8')
+  assert.match(cli, /function summary/, 'no closing summary')
+  assert.match(cli, /auth-client undo/, 'the summary must say how to undo')
+  // Box padding is computed on visible width, so colour codes must be stripped
+  // before measuring or every line is short by the length of its escapes.
+  assert.match(cli, /replace\(\/\\x1b\\\[\[0-9;\]\*m\/g, ''\)/, 'box width must ignore ANSI codes')
 })
 
 await test('a fresh project reports every step pending', () => {

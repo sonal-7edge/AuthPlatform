@@ -60,8 +60,23 @@ npm install
 npm install github:Nishan666/auth-client
 ```
 
-This scaffolds `src/auth/` and nothing else — mandatory, purely additive, and
-the package's own territory:
+That scaffolds `src/auth/` and tells you what to do next. It touches nothing
+else and asks nothing:
+
+```
+  ╭───────────────────────────────────────────────────────────────╮
+  │ ✓ @7edge/auth-client v0.2.0 installed                         │
+  │                                                               │
+  │   ✓ src/auth/ — 19 files: screens, components, validation     │
+  │   · .env, src/main.jsx, src/App.jsx — not touched             │
+  │                                                               │
+  │   Next, run:                                                  │
+  │     npx auth-client setup                                     │
+  │     asks before it changes .env, src/main.jsx or src/App.jsx  │
+  ╰───────────────────────────────────────────────────────────────╯
+```
+
+What lands in `src/auth/`:
 
 ```
 src/auth/
@@ -81,15 +96,29 @@ package is `useAuth` — the auth engine. Every screen, every primitive and
 every string is a local file you can edit or delete. There is no config file:
 `VITE_API_BASE_URL` is read by the package itself.
 
-Your `.env`, `main.jsx` and `App.jsx` are **not** touched. The install cannot
-ask: npm hides a lifecycle script's output unless you pass
-`--foreground-scripts`, and it is also reading the terminal itself, so a prompt
-here loses the race and stalls the install having asked nothing. The questions
-live in the next step instead, and the reminder is left on disk as
-`src/auth/NEXT-STEPS.txt`.
+<details>
+<summary>Why the install does not just ask you there and then</summary>
 
-> If your environment disables install scripts (`--ignore-scripts`, some CI
-> setups), even `src/auth/` is skipped. Run `npx auth-client init`.
+It was tried, and it does not work reliably. npm runs lifecycle scripts with
+piped stdio, so a hook cannot use `process.stdin` and its stdout is hidden
+unless you pass `--foreground-scripts`. The controlling terminal, `/dev/tty`,
+is reachable — but two things make *reading* it a bad idea:
+
+- **npm owns the cursor's line.** It repaints its progress bar there about 40
+  times a second for the whole install — measured at 320 redraws in 8 seconds —
+  erasing anything that shares the line. It cannot be silenced from inside a
+  hook: `--foreground-scripts` does not stop it, `spawnSync` does not block it,
+  and `process.ppid` is the shell npm spawned rather than npm itself.
+- **The terminal's input buffer is not the package's to consume.** Shell prompt
+  themes issue terminal queries whose replies arrive there as escape sequences.
+  Reading one as an answer made the question cancel itself before the user had
+  touched the keyboard.
+
+Writing is fine, so the notice above goes to `/dev/tty` and is also left in the
+project as `src/auth/NEXT-STEPS.txt`. The questions live in a command that owns
+its terminal, where a normal prompt behaves normally.
+
+</details>
 
 ### 3. Finish the setup
 
@@ -105,43 +134,53 @@ manual equivalent if you decline:
 | *Create / append `.env`* | adds `VITE_API_BASE_URL` — appended to an existing `.env`, never replacing it | copy the block it prints into `.env` |
 | *Wire them up now?* | rewrites `src/main.jsx` + `src/App.jsx`, saving both as `.bak` first | copy the two files it points at |
 
+Then it tells you exactly what changed and how to undo it:
+
+```
+  ╭────────────────────────────────────────────────────────────────────────╮
+  │ @7edge/auth-client v0.2.0  ready                                       │
+  ├────────────────────────────────────────────────────────────────────────┤
+  │ What changed                                                           │
+  │   ✓ src/auth/ — 19 files already in place, left alone                  │
+  │   ✓ .env — auth block appended, your other keys untouched              │
+  │   ✓ src/main.jsx — imports the stylesheet                              │
+  │   ✓ src/App.jsx — home page: session panel, account actions            │
+  │                                                                        │
+  │ Next                                                                   │
+  │   1  set VITE_API_BASE_URL in .env — it ships as a placeholder         │
+  │   2  npm run dev                                                       │
+  │                                                                        │
+  │ Undo                                                                   │
+  │   npx auth-client undo   puts main.jsx + App.jsx back                  │
+  │     · src/main.jsx.bak — your original, kept until you delete it       │
+  │     · src/App.jsx.bak — your original, kept until you delete it        │
+  │   npx auth-client status what is done and what is left                 │
+  │   src/auth/ is yours — editing or deleting it breaks nothing upstream  │
+  ╰────────────────────────────────────────────────────────────────────────╯
+```
+
 **It resumes.** Every answer is recorded in `src/auth/.auth-client.json` the
 moment it is given, so quitting at the `.env` question and running `setup`
-again picks up exactly there:
+again picks up exactly there. A step you *declined* is remembered and not
+asked again (`setup --all` re-offers it); a step you never answered stays
+pending. There is no time limit on an answer — Ctrl+C leaves everything
+untouched.
 
 ```bash
-npx auth-client status
-```
-```
-  ✓ src/auth/ scaffold         done
-  ✓ .env (VITE_API_BASE_URL)   done
-  ○ src/main.jsx + App.jsx     pending
-
-  Resume with npx auth-client setup
+npx auth-client status    # ✓ done / · declined / ○ pending, per step
+npx auth-client env       # just the .env step
+npx auth-client wire      # just the main.jsx + App.jsx step
+npx auth-client undo      # restore main.jsx + App.jsx from their .bak files
+npx auth-client init      # re-scaffold src/auth/  (--force to overwrite)
+npx auth-client setup -y  # answer yes to everything, no prompts
 ```
 
-A step you *declined* is remembered and not asked again; `setup --all`
-re-offers it. A step you never answered stays pending. The record is a
-convenience, not the source of truth — delete it and state is re-derived from
-the files themselves, so nothing already done runs twice.
-
-> **Resume with `npx auth-client setup`, not by reinstalling.** npm only runs
-> install hooks when it actually installs something. A second
+> **Resume with `setup`, not by reinstalling.** npm only runs install hooks
+> when it actually installs something. A second
 > `npm install github:Nishan666/auth-client` prints `up to date` and runs
 > nothing — not even with `--force`.
 
-Each step also runs on its own, and the wiring is reversible:
-
-```bash
-npx auth-client env      # just the .env step
-npx auth-client wire     # just the main.jsx + App.jsx step
-npx auth-client undo     # restore main.jsx + App.jsx from their .bak files
-npx auth-client init     # re-scaffold src/auth/  (--force to overwrite)
-npx auth-client setup -y # answer yes to everything, no prompts
-```
-
-Nothing else in your project is touched. In full, after installing and
-accepting both steps, a clean git tree shows exactly:
+Nothing outside the above is touched. In full, a clean git tree shows exactly:
 
 ```
 M  package.json        the dependency entry (npm's own doing)
@@ -156,24 +195,6 @@ M  src/App.jsx         wired
 
 No `.gitignore` edits, no extra dependencies, no scripts added to your
 `package.json`.
-
-<details>
-<summary>What the wiring writes</summary>
-
-`src/main.jsx` gains one line — the precompiled stylesheet:
-
-```jsx
-import '@7edge/auth-client/style.css'
-```
-
-`src/App.jsx` becomes a working home page: it swaps between `<AuthFlow />` and
-your signed-in area, and ships a **Session** panel with the live idToken
-countdown, the decoded JWT claims and a **Force refresh** button — useful while
-wiring up, safe to delete once you trust it. `ChangePassword` and
-`DeleteAccount` drop in as plain components.
-
-Both files are in `node_modules/@7edge/auth-client/dist/templates/app/`.
-</details>
 
 ### 4. Run
 
@@ -475,25 +496,25 @@ Create React App `process.env.REACT_APP_…`, Next.js `process.env.NEXT_PUBLIC_�
 **`src/auth/` was not created.** Install scripts are disabled in your
 environment. Run `npx auth-client init`.
 
-**The install did not ask me anything.** It never does — `npm install` only
-scaffolds `src/auth/`. See `src/auth/NEXT-STEPS.txt`, then run
-`npx auth-client setup`.
+**The install did not ask me anything.** By design — it only scaffolds
+`src/auth/` and prints what to run next. See
+[Why the install does not just ask you there and then](#2-install-the-auth-package).
+
+**I did not see the install's notice.** npm hides a lifecycle script's output
+unless you pass `--foreground-scripts`. The notice is written to your terminal
+directly to get around that, but if there is none — CI, a Docker build, piped
+output — it is only in `src/auth/NEXT-STEPS.txt`.
 
 **Re-installing does not resume.** npm only runs install hooks when it actually
 installs something; a second `npm install github:Nishan666/auth-client` prints
 `up to date` and runs nothing, `--force` included. Use
-`npx auth-client setup` — it reads the same progress record and picks up where
-you stopped. `npx auth-client status` shows what is outstanding.
+`npx auth-client setup` — it reads the progress record and picks up where you
+stopped. `npx auth-client status` shows what is outstanding.
 
-**It asked about a step I already declined.** It should not — a declined step
-is recorded. If `src/auth/.auth-client.json` was deleted, state is re-derived
-from the files, and a decline is indistinguishable from never having asked.
-Harmless: answer no again, or delete the file to start the questions over.
-
-**I edited a scaffolded component and the styling vanished.** You most likely
-added a Tailwind class the precompiled `style.css` does not contain. See
-[Editing the scaffolded components](#editing-the-scaffolded-components) —
-plain CSS in `src/auth/home.css` always works.
+**It asked about a step I already declined.** It should not — a declined step is
+recorded. If `src/auth/.auth-client.json` was deleted, state is re-derived from
+the files, and a decline is indistinguishable from never having asked.
+Harmless: answer no again.
 
 **I want my original `main.jsx` / `App.jsx` back.** `npx auth-client undo`
 restores them from the `.bak` files `wire` wrote. If you have since deleted the
@@ -704,6 +725,22 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
   writes the auth folder — the package's own territory — and nothing else
   without consent. It never overwrites existing files and never fails an
   install.
+- **Install, then one command.** `npm install` scaffolds `src/auth/` and
+  prints a notice naming the next step; `npx auth-client setup` asks about
+  `.env` and the app wiring. Prompting *during* the install was built and then
+  removed: npm repaints the cursor's line ~40 times a second and erases
+  anything on it, and the terminal's input buffer carries escape-sequence
+  replies to shell prompt themes, one of which was read as an answer and made
+  the question cancel itself unprompted. The hook now writes to `/dev/tty`
+  (npm hides its stdout) but never reads, so it cannot stall an install.
+- **Resumable setup.** Each answer is recorded in
+  `src/auth/.auth-client.json` as it is given, so an interrupted run continues
+  from the step it stopped on. A declined step is not re-asked (`setup --all`
+  re-offers it); an unanswered one is. The file is derived state — delete it
+  and it is rebuilt from the files. `npx auth-client status` prints what is
+  outstanding, and there is no time limit on an answer.
+- **A closing summary.** `setup` ends with what changed, what to do next, and
+  how to undo it — including which `.bak` files are waiting.
 - **A fully ejected `src/auth/`.** The screens' primitives
   (`components/`), the field rules (`validation.js`) and the UI constants are
   now local files too, so `useAuth` is the only thing a generated file imports
@@ -730,7 +767,7 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
 - **Moved to its own repository**, with the package at the root. npm cannot
   install from a subdirectory of a repo, which made `npm i github:…` impossible
   while the library lived inside the AuthPlatform monorepo.
-- `scripts/verify-package.mjs` — 63 assertions run against `dist/`, not `src/`,
+- `scripts/verify-package.mjs` — 66 assertions run against `dist/`, not `src/`,
   covering the backend route contract, the install/setup contract (`.env` is
   appended never replaced, `undo` restores byte for byte) and the resume logic
   (an interrupted step is offered again, a completed one never is).

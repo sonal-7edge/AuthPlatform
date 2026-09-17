@@ -1,7 +1,7 @@
 {
   "name": "@7edge/auth-client",
-  "version": "0.2.0",
-  "description": "Plug-and-play frontend authentication library \u2014 headless core methods, React hooks, and prebuilt UI screens, all from one entry point.",
+  "version": "0.2.1",
+  "description": "Plug-and-play frontend authentication library — headless core methods, React hooks, and prebuilt UI screens, all from one entry point.",
   "keywords": [
     "authentication",
     "auth",

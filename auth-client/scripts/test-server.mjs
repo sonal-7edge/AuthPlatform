@@ -38,9 +38,11 @@ function issueJWT(claims, ttl) {
 }
 
 /**
- * @param {{ tokenTTL?: number }} [options]
+ * @param {{ tokenTTL?: number, requireUsername?: boolean }} [options]
+ *   `requireUsername` models a Cognito app client that has a client secret,
+ *   where /auth/refresh must carry the username to build a SECRET_HASH.
  */
-export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
+export async function startTestServer({ tokenTTL = TOKEN_TTL, requireUsername = false } = {}) {
   /** @type {Map<string, object>} identifier -> user */
   const users = new Map()
   /** @type {Map<string, object>} refresh_token -> session */
@@ -54,6 +56,8 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
   const seenAuthHeader = new Map()
   /** Makes the next authenticated call 401 once, to drive the retry path. */
   let force401 = null
+  /** The last body POSTed to /auth/refresh, so tests can assert its shape. */
+  let lastRefreshBody = null
 
   const key = (v) => String(v ?? '').trim().toLowerCase()
   const identifierOf = (p = {}) => p.identifier ?? p.email ?? p.phone ?? ''
@@ -64,7 +68,7 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
   }
 
   index({
-    id: uid('usr'), email: 'seed@example.com', phone: '+11234567890',
+    id: uid('usr'), username: uid('cun'), email: 'seed@example.com', phone: '+11234567890',
     password: 'Password123!', name: 'Seed User', verified: true,
   })
 
@@ -75,7 +79,16 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
       identifier: key(user.email ?? user.phone),
       expiresAt: Date.now() + REFRESH_TTL * 1000,
     })
-    const claims = { sub: user.id, email: user.email ?? null, name: user.name }
+    // `cognito:username` is deliberately NOT `sub` — on a real pool with an
+    // alias attribute they differ, and only this one hashes into a valid
+    // SECRET_HASH. Keeping them distinct here is what stops a refresh that
+    // sends `sub` from passing the suite and then 401-ing against Cognito.
+    const claims = {
+      sub: user.id,
+      'cognito:username': user.username ?? user.id,
+      email: user.email ?? null,
+      name: user.name,
+    }
     // Mirrors the deployed API exactly: camelCase, and no accessToken.
     return { idToken: issueJWT(claims, tokenTTL), refreshToken: refresh_token }
   }
@@ -144,6 +157,7 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
         const isEmail = !!payload.email
         index({
           id: uid('usr'),
+          username: uid('cun'),
           name: [payload.firstName, payload.lastName].filter(Boolean).join(' ') || id,
           email: isEmail ? id : null,
           phone: isEmail ? null : id,
@@ -257,6 +271,19 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
           sessions.delete(presented)
           return [401, { message: 'Account no longer exists', code: 'USER_NOT_FOUND' }]
         }
+        lastRefreshBody = payload
+        /**
+         * Stands in for Cognito's SECRET_HASH check on an app client that has
+         * a client secret: the hash is an HMAC over the username, so a caller
+         * that omits it — or sends `sub` instead of `cognito:username` — gets
+         * NotAuthorizedException, surfaced by the API as 401.
+         *
+         * `requireUsername` is opt-in so the default server keeps modelling a
+         * secret-less client, where the field is genuinely unnecessary.
+         */
+        if (requireUsername && payload.username !== (user.username ?? user.id)) {
+          return [401, { message: 'Incorrect credentials', code: 'NOT_AUTHORIZED' }]
+        }
         // Rotate: the presented token is single-use.
         sessions.delete(presented)
         return [200, issueBundle(user) ]
@@ -298,6 +325,8 @@ export async function startTestServer({ tokenTTL = TOKEN_TTL } = {}) {
     counts,
     /** Did the given route receive an Authorization header? */
     sawBearer: (url) => seenAuthHeader.get(url),
+    /** The last body POSTed to /auth/refresh. */
+    lastRefreshBody: () => lastRefreshBody,
     /** Make the next call to `url` fail with 401 exactly once. */
     expireNext: (url) => { force401 = url },
     close: () => new Promise((resolve) => server.close(resolve)),

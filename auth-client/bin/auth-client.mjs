@@ -9,15 +9,20 @@
  *   npx auth-client undo      restore main.jsx / App.jsx from backups
  *   npx auth-client status    what is done, declined or outstanding
  *
- * `npm install` only scaffolds src/auth/ — it cannot ask anything, so every
- * question lives here. Progress is recorded in src/auth/.auth-client.json as
- * each answer is given, so `setup` resumes at the step it stopped on rather
- * than starting over. Note that reinstalling does NOT resume: npm skips
- * install hooks when nothing changed, so `setup` is the way back in.
+ * `npm install` runs `setup --from-install` on the controlling terminal (see
+ * bin/postinstall.mjs), so the questions are part of the install itself. This
+ * is the same path for anyone who skipped them, was in CI, or wants one step
+ * on its own.
+ *
+ * Progress is recorded in src/auth/.auth-client.json as each answer is given,
+ * so setup resumes at the step it stopped on rather than starting over. Note
+ * that *reinstalling* does not resume: npm skips install hooks when nothing
+ * changed, so `setup` is the way back in.
  */
 
 import { createInterface } from 'node:readline/promises'
 import { existsSync, readFileSync } from 'node:fs'
+
 import { join } from 'node:path'
 import {
   scaffoldAuth, writeEnv, wireApp, undoWiring, isWired,
@@ -39,12 +44,32 @@ const skip = (s) => console.log(`  ${c.yellow('·')} ${s}`)
 const cmd = (s) => c.cyan(s)
 
 /**
+ * One readline for the whole run, created on first use.
+ *
+ * Not one per question: closing an interface discards what it has buffered, so
+ * a second question would lose input the user typed ahead.
+ *
+ * There is no time limit on an answer, and no raw-mode keypress reading. An
+ * earlier version read single keypresses to survive `npm install`; it also
+ * read the escape sequences that shell prompt themes leave in the terminal's
+ * input buffer, and treated the leading \x1b as Esc — so the question
+ * cancelled itself before the user touched anything. Prompting now only
+ * happens here, where the terminal is ours and readline is the right tool.
+ */
+let readline = null
+const prompt = () => (readline ??= createInterface({ input: process.stdin, output: process.stdout }))
+function closePrompt() {
+  readline?.close()
+  readline = null
+}
+
+/**
  * Asks a yes/no question.
  *
- * @returns {Promise<boolean|null>} `null` means *unanswered* — no terminal, or
- * the user hit Ctrl+C. That is deliberately not the same as `false`: an
- * unanswered step stays pending so the next run resumes at it, whereas a "no"
- * is remembered and not asked again.
+ * @returns {Promise<boolean|null>} `null` means *unanswered* — not a terminal,
+ * or the user hit Ctrl+C. Deliberately not the same as `false`: an unanswered
+ * step stays pending so the next run resumes at it, whereas a "no" is
+ * remembered and not asked again.
  */
 async function confirm(question, { def = true } = {}) {
   if (has('--yes') || has('-y')) return true
@@ -52,18 +77,15 @@ async function confirm(question, { def = true } = {}) {
     console.log(`  ${c.yellow('·')} not a terminal — skipping "${question}"`)
     return null
   }
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
   try {
-    const answer = (await rl.question(`  ${question} ${c.dim(def ? '(Y/n)' : '(y/N)')} `)).trim().toLowerCase()
+    const answer = (await prompt().question(`  ${question} ${c.dim(def ? '(Y/n)' : '(y/N)')} `)).trim().toLowerCase()
     if (!answer) return def
     return answer === 'y' || answer === 'yes'
   } catch {
-    // Ctrl+C / Ctrl+D closes stdin mid-question. Bail out cleanly instead of
+    // Ctrl+C / Ctrl+D closes stdin mid-question: bail out cleanly rather than
     // crashing with a Node stack trace, and leave the step unanswered.
     console.log(`\n  ${c.yellow('·')} cancelled`)
     return null
-  } finally {
-    rl.close()
   }
 }
 
@@ -99,13 +121,16 @@ function stepEnv() {
 }
 
 // ── step 3 · app wiring ────────────────────────────────────────────────────
-function stepWire() {
+function stepWire({ quiet = false } = {}) {
   const { written, backedUp } = wireApp({ project: PROJECT })
   backedUp.forEach((f) => skip(`backed up ${f}`))
   written.forEach((f) => ok(`wired ${f}`))
-  console.log(c.dim(`    undo with ${cmd('npx auth-client undo')}`))
-  if (backedUp.length) {
-    console.log(c.dim('    the .bak files are yours to delete once you are happy — nothing reads them but `undo`'))
+  // `setup` closes with a summary that covers undo; saying it twice is noise.
+  if (!quiet) {
+    console.log(c.dim(`    undo with ${cmd('npx auth-client undo')}`))
+    if (backedUp.length) {
+      console.log(c.dim('    the .bak files are yours to delete once you are happy'))
+    }
   }
   return { written, backedUp }
 }
@@ -122,9 +147,82 @@ function manualWire() {
   console.log(c.dim(`      both templates: ${join(TEMPLATES, 'app')}`))
 }
 
+// ── the closing summary ────────────────────────────────────────────────────
+
+/** Visible width, ignoring the escape codes that make it colourful. */
+const width = (line) => line.replace(/\x1b\[[0-9;]*m/g, '').length
+
+/** Draws a rounded box sized to its widest line. */
+function box(title, lines) {
+  const inner = Math.max(width(title), ...lines.map(width)) + 2
+  const pad = (line) => line + ' '.repeat(inner - width(line))
+  const rule = '─'.repeat(inner + 1)
+
+  console.log(c.dim(`  ╭${rule}╮`))
+  console.log(`  ${c.dim('│')} ${pad(title)}${c.dim('│')}`)
+  console.log(c.dim(`  ├${rule}┤`))
+  for (const line of lines) console.log(`  ${c.dim('│')} ${pad(line)}${c.dim('│')}`)
+  console.log(c.dim(`  ╰${rule}╯`))
+}
+
+/**
+ * What just happened, what to do next, and how to put it back. Printed at the
+ * end of `setup` because that is the one moment the user has the whole picture
+ * in front of them — and the one moment they might want to undo it.
+ *
+ * @param {{ done: string[], skipped: string[], backups: string[] }} report
+ */
+function summary(report) {
+  const state = stepStatus({ project: PROJECT })
+  const left = ['env', 'wire'].filter((step) => state[step] !== 'done')
+
+  const lines = []
+
+  lines.push(c.bold('What changed'))
+  report.done.forEach((line) => lines.push(`  ${c.green('✓')} ${line}`))
+  report.skipped.forEach((line) => lines.push(`  ${c.yellow('·')} ${line}`))
+
+  lines.push('')
+  lines.push(c.bold('Next'))
+  if (state.env === 'done') {
+    lines.push(`  1  set ${c.cyan(ENV_KEY)} in .env ${c.dim('— it ships as a placeholder')}`)
+    lines.push(`  2  ${c.cyan('npm run dev')}`)
+  } else {
+    lines.push(`  1  ${c.cyan('npx auth-client setup')} ${c.dim(`— ${left.join(' + ')} still to do`)}`)
+    lines.push(`  2  set ${c.cyan(ENV_KEY)} in .env, then ${c.cyan('npm run dev')}`)
+  }
+
+  // Offer undo whenever a backup is sitting there, not just when this run made
+  // one — on a resumed setup the wiring happened earlier but is just as undoable.
+  const backups = ['src/main.jsx.bak', 'src/App.jsx.bak'].filter((f) => existsSync(join(PROJECT, f)))
+
+  lines.push('')
+  lines.push(c.bold('Undo'))
+  if (backups.length) {
+    lines.push(`  ${c.cyan('npx auth-client undo')}   ${c.dim('puts main.jsx + App.jsx back')}`)
+    backups.forEach((file) => lines.push(c.dim(`    · ${file} — your original, kept until you delete it`)))
+  } else {
+    lines.push(`  ${c.cyan('npx auth-client undo')}   ${c.dim('nothing to undo — no .bak files')}`)
+  }
+  lines.push(`  ${c.cyan('npx auth-client status')} ${c.dim('what is done and what is left')}`)
+  lines.push(c.dim('  src/auth/ is yours — editing or deleting it breaks nothing upstream'))
+
+  // npm repaints the cursor's line for the whole install, so its progress bar
+  // scrolls under the question. It cannot be silenced from in here, but the
+  // user can turn it off on their side — worth mentioning once, afterwards,
+  // where there is room to say it.
+
+  console.log('')
+  box(
+    `${c.bold(pkg.name)} ${c.dim(`v${pkg.version}`)}  ${left.length ? c.yellow('partly set up') : c.green('ready')}`,
+    lines
+  )
+  console.log('')
+}
+
 // ── commands ───────────────────────────────────────────────────────────────
 async function setup() {
-  header()
+  const report = { done: [], skipped: [], backups: [] }
 
   // Where the last run stopped. `--all` re-offers steps that were declined;
   // by default a "no" stays a no, so re-running is not a nag.
@@ -133,60 +231,80 @@ async function setup() {
   const wants = (step) => before[step] === 'pending' || (reoffer && before[step] === 'declined')
   const resuming = before.auth === 'done' && (before.env !== 'pending' || before.wire !== 'pending')
 
+  header()
+
   if (resuming && (wants('env') || wants('wire'))) {
     const left = ['env', 'wire'].filter(wants)
-    console.log(c.dim(`  Resuming — ${left.length} step${left.length > 1 ? 's' : ''} left: ${left.join(', ')}\n`))
+    console.log(c.dim(`  Resuming — ${left.length} step${left.length > 1 ? 's' : ''} left: ${left.join(', ')}`))
   }
 
-  const { created } = stepAuth({ quiet: true })
-  if (created.length) created.forEach((f) => ok(`created ${f}`))
-  else skip('src/auth/ already present')
+  const { created, skipped } = stepAuth({ quiet: true })
   recordStep({ project: PROJECT, step: 'auth', status: 'done' })
+  // Normally `npm install` has already scaffolded it, so `created` is empty
+  // and the interesting number is what is on disk.
+  report.done.push(
+    created.length
+      ? `src/auth/ ${c.dim(`— ${created.length} files created`)}`
+      : `src/auth/ ${c.dim(`— ${skipped.length} files already in place, left alone`)}`
+  )
   console.log('')
 
+  // ── .env ──────────────────────────────────────────────────────────────────
   if (!wants('env')) {
-    skip(before.env === 'done' ? `.env already defines ${ENV_KEY} — leaving it alone` : '.env declined earlier — re-offer with --all')
+    if (before.env === 'done') report.done.push(`.env ${c.dim(`— ${ENV_KEY} already set, left alone`)}`)
+    else report.skipped.push(`.env ${c.dim('— declined earlier, re-offer with --all')}`)
   } else {
     const envPath = join(PROJECT, '.env')
-    const verb = existsSync(envPath) ? 'Append the auth block to your existing .env' : 'Create .env'
+    const exists = existsSync(envPath)
     console.log(c.dim(`  ${ENV_KEY} tells the library which API to call.`))
-    const answer = await confirm(`${verb}?`, { def: true })
+    const answer = await confirm(exists ? 'Append the auth block to your existing .env?' : 'Create .env?', { def: true })
+
     if (answer === true) {
-      stepEnv()
+      const result = stepEnv()
       recordStep({ project: PROJECT, step: 'env', status: 'done' })
+      report.done.push(`.env ${c.dim(`— ${result.action === 'appended' ? 'auth block appended, your other keys untouched' : 'created'}`)}`)
     } else if (answer === false) {
       // An explicit no is remembered, so re-running is not a nag.
       recordStep({ project: PROJECT, step: 'env', status: 'declined' })
       skip('.env not touched')
       manualEnv()
+      report.skipped.push(`.env ${c.dim('— you said no; add it yourself or run `auth-client env`')}`)
     } else {
       // Unanswered — stays pending, so the next run resumes right here.
       skip('.env left for later — this step will be offered again')
-      manualEnv()
+      report.skipped.push(`.env ${c.dim('— left for later')}`)
     }
   }
   console.log('')
 
+  // ── app wiring ────────────────────────────────────────────────────────────
   if (!wants('wire')) {
-    skip(before.wire === 'done' ? 'src/App.jsx already imports ./auth — leaving your wiring alone' : 'wiring declined earlier — re-offer with --all')
+    if (before.wire === 'done') report.done.push(`src/App.jsx ${c.dim('— already imports ./auth, your wiring kept')}`)
+    else report.skipped.push(`app wiring ${c.dim('— declined earlier, re-offer with --all')}`)
   } else {
     console.log(c.dim('  This REPLACES src/main.jsx and src/App.jsx (originals saved as .bak).'))
     const answer = await confirm('Wire them up now?', { def: false })
+
     if (answer === true) {
-      stepWire()
+      const { backedUp } = stepWire({ quiet: true })
       recordStep({ project: PROJECT, step: 'wire', status: 'done' })
+      report.done.push(`src/main.jsx ${c.dim('— imports the stylesheet')}`)
+      report.done.push(`src/App.jsx ${c.dim('— home page: session panel, account actions')}`)
+      report.backups = backedUp
     } else if (answer === false) {
       recordStep({ project: PROJECT, step: 'wire', status: 'declined' })
       skip('app files not touched')
       manualWire()
+      report.skipped.push(`app wiring ${c.dim('— you said no; run `auth-client wire` to change your mind')}`)
     } else {
       skip('wiring left for later — this step will be offered again')
-      manualWire()
+      report.skipped.push(`app wiring ${c.dim('— left for later')}`)
     }
   }
 
-  if (clearNote({ project: PROJECT })) ok('removed src/auth/NEXT-STEPS.txt — nothing outstanding')
-  console.log(`\n${c.bold('Done.')} ${c.dim(`Set ${ENV_KEY} in .env, then ${'npm run dev'}.`)}\n`)
+  if (clearNote({ project: PROJECT })) report.done.push(`removed NEXT-STEPS.txt ${c.dim('— nothing outstanding')}`)
+  closePrompt()
+  summary(report)
 }
 
 /** Prints what is done, declined or still outstanding. */

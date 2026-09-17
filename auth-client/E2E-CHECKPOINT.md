@@ -6,7 +6,7 @@
 
 Status: `—` not run · `PASS` · `FAIL` · `BLOCKED`
 
-**Last full run** 2026-09-16 — 71/71 browser checks pass, plus 63/63 package
+**Last full run** 2026-09-16 — 71/71 browser checks pass, plus 66/66 package
 assertions (`npm run verify`). The four `BLOCKED` rows below are all downstream
 of finding 1 and are server-side; nothing in the library is failing.
 
@@ -18,7 +18,7 @@ of finding 1 and are server-side; nothing in the library is failing.
 | `bug2.mjs` — identifier-switch clears credentials | 4/4 |
 | `audit.mjs` — double-submit, Enter, aria-busy, trimming | 5/5 |
 | `home.mjs` — the generated home page | 9/9 |
-| `npm run verify` — artifact, install contract, resume, ejection | 63/63 |
+| `npm run verify` — artifact, install contract, resume, ejection | 66/66 |
 
 All browser suites run against a **clean install of the packed artifact**, using
 the shipped `App.jsx` template (plus a `?screen=` harness for isolating screens).
@@ -150,9 +150,11 @@ packed dist repo.
 | I11 | Ctrl+C / Ctrl+D at a prompt exits cleanly | PASS | was a raw Node stack trace — fixed; the step stays pending, not declined |
 | I12 | Non-TTY (CI, piped) does not hang | PASS | skips the prompt and says so; `--yes` accepts everything |
 | I13 | Wired app builds and signs in end to end | PASS | no sign-in flash on reload |
-| I14 | `npm install` never prompts or stalls | PASS | ~1s; prompting was tried over `/dev/tty` and **reverted** — npm also reads that terminal, so a real user's keystrokes went to npm and the question timed out having asked nothing |
+| I14 | `npm install` scaffolds and prints the next command | PASS | 3s, no prompt; notice written to `/dev/tty` because npm hides hook stdout, and rendered intact via a terminal emulator |
 | I15 | Install writes only `src/auth/` | PASS | `.env`, `main.jsx`, `App.jsx` untouched |
 | I16 | `NEXT-STEPS.txt` names the outstanding steps | PASS | rewritten each install, removed when nothing is left |
+| I16b | In-install prompting — **removed** | N/A | built and withdrawn. Two blockers, both measured: npm repaints the cursor's line ~40×/sec (320 redraws in 8s) and cannot be silenced from a hook (`--foreground-scripts` 318, `spawnSync` does not block it, `process.ppid` is the shell not npm); and the terminal's input buffer carries escape-sequence replies to shell prompt themes — one was read as `\x1b` and cancelled the question before the user touched anything |
+| I16c | The hook never reads input | PASS | asserted in `npm run verify`, so it cannot stall an install |
 | I17 | Interrupted at `.env`, next run resumes at `.env` | PASS | `auth: done` recorded, `env` left pending |
 | I18 | Answered steps are never re-asked | PASS | `Resuming — 1 step left: wire` |
 | I19 | A declined step is remembered | PASS | not re-asked; `setup --all` re-offers it |
