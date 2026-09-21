@@ -8,8 +8,8 @@ import { AUTH_SCREENS } from '../constants'
 import { MIN_PASSWORD_LENGTH, validateConfirmation, validatePassword } from '../validation'
 
 export default function ResetPassword({ flow, setFlow }) {
-  const { resetPassword, isLoading, error } = useAuth()
-  const { pendingIdentifier, resetToken } = flow
+  const { resetPassword, isLoading, error, clearError } = useAuth()
+  const { resetToken } = flow
 
   const [form, setForm] = useState({ password: '', confirm: '' })
   const [fieldErrors, setFieldErrors] = useState({})
@@ -34,18 +34,23 @@ export default function ResetPassword({ flow, setFlow }) {
     }
     setFieldErrors({})
 
-    const result = await resetPassword({
-      identifier: pendingIdentifier,
-      resetToken,
-      newPassword: form.password,
-    })
+    const result = await resetPassword({ resetToken, newPassword: form.password })
 
     if (!result.error) {
-      setFlow({ screen: AUTH_SCREENS.SIGN_IN, resetToken: null, pendingIdentifier: null })
+      setFlow({
+        screen: AUTH_SCREENS.SIGN_IN,
+        resetToken: null,
+        pendingIdentifier: null,
+        notice: 'Password updated. Sign in with your new password.',
+      })
     }
   }
 
-  const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
+  const set = (key) => (event) => {
+    if (error) clearError()
+    setFieldErrors((errors) => (errors[key] ? { ...errors, [key]: '' } : errors))
+    setForm((f) => ({ ...f, [key]: event.target.value }))
+  }
 
   return (
     <AuthCard title="Set a new password" subtitle="Choose a password you haven't used before">

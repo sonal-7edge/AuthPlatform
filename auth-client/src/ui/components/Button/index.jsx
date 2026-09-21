@@ -45,7 +45,16 @@ export default function Button({
         ${isInactive ? 'opacity-50 pointer-events-none' : ''}
         ${className}`}
     >
-      {loading ? <LoadingSpinner /> : (children ?? text)}
+      {loading ? (
+        <>
+          <LoadingSpinner decorative />
+          {/* Keeps the accessible name stable — without this the button is
+              announced as "Loading" and loses its identity mid-action. */}
+          <span className="sr-only">{children ?? text}</span>
+        </>
+      ) : (
+        children ?? text
+      )}
     </button>
   )
 }

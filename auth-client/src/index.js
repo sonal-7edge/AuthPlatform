@@ -9,8 +9,12 @@
  *   import 'auth-client/style.css'
  *
  * The `auth-client/react` and `auth-client/ui` subpaths still resolve for
- * existing importers. `auth-client/core` is the one meaningful subpath: it
- * carries no React import at all, for Node scripts and non-React hosts.
+ * existing importers. `auth-client/core` carries no React import at all, for
+ * Node scripts and non-React hosts.
+ *
+ * `auth-client/config` is deliberately NOT re-exported here. It reads
+ * `import.meta.env`, which must be substituted by the *consumer's* build — so
+ * it ships unbundled and has to be imported from its own subpath.
  */
 
 // ── Core: headless client ────────────────────────────────────────────────

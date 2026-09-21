@@ -1,3 +1,5 @@
+const crypto = require('crypto')
+
 const CORS_HEADERS = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -64,6 +66,32 @@ function resolveIdentifier(body) {
 }
 
 /**
+ * The Cognito Username backing an identifier.
+ *
+ * The pool has email/phone as *alias* attributes, so SignUp rejects an email-
+ * or phone-shaped Username outright, and the alias itself resolves to nobody
+ * until the user is CONFIRMED. A random username at sign-up would therefore
+ * leave verify-otp with no way to name the user it just created — Cognito
+ * answers ExpiredCodeException, because it won't admit the user is missing.
+ *
+ * Deriving it from the identifier keeps the Username opaque to Cognito's
+ * alias rules while letting every pre-confirmation handler recompute it,
+ * with nothing stored and no lookup call. Shaped like a UUID so it reads the
+ * same as any other Cognito-generated username in the console.
+ */
+function usernameFor(identifier) {
+    const normalized = String(identifier).trim().toLowerCase()
+    const digest = crypto.createHash('sha256').update(normalized).digest('hex')
+    return [
+        digest.slice(0, 8),
+        digest.slice(8, 12),
+        digest.slice(12, 16),
+        digest.slice(16, 20),
+        digest.slice(20, 32),
+    ].join('-')
+}
+
+/**
  * Reads the profile the frontend contract expects straight out of the id
  * token, so returning a user alongside tokens costs no extra Cognito call.
  * The token is already signed by Cognito and verified by the API Gateway
@@ -94,6 +122,7 @@ module.exports = {
     serverError,
     parseBody,
     resolveIdentifier,
+    usernameFor,
     userFromIdToken,
     getHeader,
 }

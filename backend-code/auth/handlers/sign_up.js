@@ -1,6 +1,6 @@
 const Cognito = require('../lib/Cognito')
 const { withErrorHandling } = require('../lib/handlerWrapper')
-const { ok, badRequest, parseBody, resolveIdentifier } = require('../lib/helpers')
+const { ok, badRequest, parseBody, resolveIdentifier, usernameFor } = require('../lib/helpers')
 
 function buildUserAttributes({ first_name, last_name, identifier, identifier_type }) {
     return [
@@ -31,8 +31,18 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
 
     const cognito = deps.cognito || new Cognito()
 
-    await cognito.signUp({
-        username: identifier,
+    // The pool has email/phone as alias attributes, not username attributes,
+    // so Cognito rejects an email- or phone-shaped Username on SignUp — hence
+    // the derived one. It has to be derived rather than random: the alias
+    // doesn't resolve while the user is UNCONFIRMED, so verify-otp and
+    // resend-otp can only name this user by recomputing the same value.
+    // Flows that run after confirmation (signin, forgot-password, ...) keep
+    // passing `identifier` and let Cognito resolve the alias.
+    const username = usernameFor(identifier)
+    console.log('signUp: creating user', { username, identifier_type })
+
+    const result = await cognito.signUp({
+        username,
         password: body.password,
         user_attributes: buildUserAttributes({
             first_name: body.firstName,
@@ -40,6 +50,16 @@ module.exports.handler = withErrorHandling(async (event, deps = {}) => {
             identifier,
             identifier_type,
         }),
+    })
+
+    // CodeDeliveryDetails is Cognito's own confirmation that it queued the
+    // code for delivery, and to where. It's undefined here whenever the
+    // pool's AutoVerifiedAttributes doesn't list the matching attribute —
+    // SignUp still succeeds, but Cognito never sends anything.
+    console.log('signUp: SignUpCommand result', {
+        username,
+        userConfirmed: result.UserConfirmed,
+        codeDeliveryDetails: result.CodeDeliveryDetails,
     })
 
     return ok({

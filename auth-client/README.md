@@ -68,69 +68,141 @@ npm install
 npm install github:Nishan666/auth-client
 ```
 
-This scaffolds into your project automatically — **no second command**:
+That scaffolds `src/auth/` and tells you what to do next. It touches nothing
+else and asks nothing:
+
+```
+  ╭───────────────────────────────────────────────────────────────╮
+  │ ✓ @7edge/auth-client v0.2.0 installed                         │
+  │                                                               │
+  │   ✓ src/auth/ — 19 files: screens, components, validation     │
+  │   · .env, src/main.jsx, src/App.jsx — not touched             │
+  │                                                               │
+  │   Next, run:                                                  │
+  │     npx auth-client setup                                     │
+  │     asks before it changes .env, src/main.jsx or src/App.jsx  │
+  ╰───────────────────────────────────────────────────────────────╯
+```
+
+What lands in `src/auth/`:
 
 ```
 src/auth/
-  config.js      reads VITE_API_BASE_URL from .env
-  index.js       one import site for your app
-  AuthFlow.jsx   the pre-auth journey
-  screens/       SignIn, SignUp, OtpVerify, ForgotPassword,
-                 ResetPassword, ChangePassword, DeleteAccount
-.env             created, or appended if you already have one
+  index.js           import auth from one place
+  AuthFlow.jsx       the pre-auth journey
+  screens/           SignIn, SignUp, OtpVerify, ForgotPassword,
+                     ResetPassword, ChangePassword, DeleteAccount
+  components/        AuthCard, Button, FormField, PasswordField,
+                     IdentifierInput, Alert, LoadingSpinner
+  validation.js      the field rules
+  constants.js       screen names, identifier types, OTP settings
+  home.css           styling for the generated home page
 ```
 
-> If your environment disables install scripts (`--ignore-scripts`, some CI
-> setups), nothing is scaffolded. Run `npx auth-client init` instead.
+**All of it is yours.** The only thing a generated file imports from the
+package is `useAuth` — the auth engine. Every screen, every primitive and
+every string is a local file you can edit or delete. There is no config file:
+`VITE_API_BASE_URL` is read by the package itself.
 
-### 3. Wire it in
+<details>
+<summary>Why the install does not just ask you there and then</summary>
 
-Two files. Replace them wholesale:
+It was tried, and it does not work reliably. npm runs lifecycle scripts with
+piped stdio, so a hook cannot use `process.stdin` and its stdout is hidden
+unless you pass `--foreground-scripts`. The controlling terminal, `/dev/tty`,
+is reachable — but two things make *reading* it a bad idea:
+
+- **npm owns the cursor's line.** It repaints its progress bar there about 40
+  times a second for the whole install — measured at 320 redraws in 8 seconds —
+  erasing anything that shares the line. It cannot be silenced from inside a
+  hook: `--foreground-scripts` does not stop it, `spawnSync` does not block it,
+  and `process.ppid` is the shell npm spawned rather than npm itself.
+- **The terminal's input buffer is not the package's to consume.** Shell prompt
+  themes issue terminal queries whose replies arrive there as escape sequences.
+  Reading one as an answer made the question cancel itself before the user had
+  touched the keyboard.
+
+Writing is fine, so the notice above goes to `/dev/tty` and is also left in the
+project as `src/auth/NEXT-STEPS.txt`. The questions live in a command that owns
+its terminal, where a normal prompt behaves normally.
+
+</details>
+
+### 3. Finish the setup
 
 ```bash
-cat > src/main.jsx <<'EOF'
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import '@7edge/auth-client/style.css'
-import App from './App.jsx'
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode><App /></StrictMode>
-)
-EOF
-
-cat > src/App.jsx <<'EOF'
-import { AuthProvider, useAuth, AuthFlow, authConfig } from './auth'
-
-function Dashboard() {
-  const { user, logout } = useAuth()
-  return (
-    <div style={{ padding: 32, fontFamily: 'system-ui' }}>
-      <h1>Signed in as {user?.email}</h1>
-      <button onClick={logout}>Log out</button>
-    </div>
-  )
-}
-
-function Root() {
-  const { isAuthenticated } = useAuth()
-  return isAuthenticated ? <Dashboard /> : <AuthFlow />
-}
-
-export default function App() {
-  return (
-    <AuthProvider config={authConfig}>
-      <Root />
-    </AuthProvider>
-  )
-}
-EOF
-
-rm -f src/App.css src/index.css
+npx auth-client setup
 ```
 
-The Vite starter's CSS files are unused now — deleting them just avoids
-confusion, they do not conflict.
+It asks before each of the two steps that touch your files, and prints the
+manual equivalent if you decline:
+
+| Prompt | What it does | Decline and do it yourself |
+|---|---|---|
+| *Create / append `.env`* | adds `VITE_API_BASE_URL` — appended to an existing `.env`, never replacing it | copy the block it prints into `.env` |
+| *Wire them up now?* | rewrites `src/main.jsx` + `src/App.jsx`, saving both as `.bak` first | copy the two files it points at |
+
+Then it tells you exactly what changed and how to undo it:
+
+```
+  ╭────────────────────────────────────────────────────────────────────────╮
+  │ @7edge/auth-client v0.2.0  ready                                       │
+  ├────────────────────────────────────────────────────────────────────────┤
+  │ What changed                                                           │
+  │   ✓ src/auth/ — 19 files already in place, left alone                  │
+  │   ✓ .env — auth block appended, your other keys untouched              │
+  │   ✓ src/main.jsx — imports the stylesheet                              │
+  │   ✓ src/App.jsx — home page: session panel, account actions            │
+  │                                                                        │
+  │ Next                                                                   │
+  │   1  set VITE_API_BASE_URL in .env — it ships as a placeholder         │
+  │   2  npm run dev                                                       │
+  │                                                                        │
+  │ Undo                                                                   │
+  │   npx auth-client undo   puts main.jsx + App.jsx back                  │
+  │     · src/main.jsx.bak — your original, kept until you delete it       │
+  │     · src/App.jsx.bak — your original, kept until you delete it        │
+  │   npx auth-client status what is done and what is left                 │
+  │   src/auth/ is yours — editing or deleting it breaks nothing upstream  │
+  ╰────────────────────────────────────────────────────────────────────────╯
+```
+
+**It resumes.** Every answer is recorded in `src/auth/.auth-client.json` the
+moment it is given, so quitting at the `.env` question and running `setup`
+again picks up exactly there. A step you *declined* is remembered and not
+asked again (`setup --all` re-offers it); a step you never answered stays
+pending. There is no time limit on an answer — Ctrl+C leaves everything
+untouched.
+
+```bash
+npx auth-client status    # ✓ done / · declined / ○ pending, per step
+npx auth-client env       # just the .env step
+npx auth-client wire      # just the main.jsx + App.jsx step
+npx auth-client undo      # restore main.jsx + App.jsx from their .bak files
+npx auth-client init      # re-scaffold src/auth/  (--force to overwrite)
+npx auth-client setup -y  # answer yes to everything, no prompts
+```
+
+> **Resume with `setup`, not by reinstalling.** npm only runs install hooks
+> when it actually installs something. A second
+> `npm install github:Nishan666/auth-client` prints `up to date` and runs
+> nothing — not even with `--force`.
+
+Nothing outside the above is touched. In full, a clean git tree shows exactly:
+
+```
+M  package.json        the dependency entry (npm's own doing)
+M  package-lock.json   ditto
+?? src/auth/           the scaffold, plus the progress record
+M  .env                the auth block appended
+M  src/main.jsx        wired
+M  src/App.jsx         wired
+?? src/main.jsx.bak    your originals — delete them once you are happy,
+?? src/App.jsx.bak     nothing but `undo` reads them
+```
+
+No `.gitignore` edits, no extra dependencies, no scripts added to your
+`package.json`.
 
 ### 4. Run
 
@@ -138,8 +210,9 @@ confusion, they do not conflict.
 npm run dev
 ```
 
-Open the URL it prints. You should see the sign-in screen. Set
-`VITE_API_BASE_URL` in `.env` to your API first — Vite only reads `.env` at
+Open the URL it prints. You should see the sign-in screen, and after signing
+in, the generated home page. Set `VITE_API_BASE_URL` in `.env` to your API
+first — it ships as a `REPLACE-ME` placeholder, and Vite only reads `.env` at
 startup, so restart after changing it.
 
 ---
@@ -150,11 +223,11 @@ startup, so restart after changing it.
 
 | Flow | Steps | Expected |
 |---|---|---|
-| Sign in | a real account's email + password → the OTP it emails | lands on the dashboard |
+| Sign in | a confirmed account's email + password | lands on the dashboard — no OTP step |
 | Wrong password | any wrong password | `Incorrect email/phone or password` |
-| Wrong OTP | any incorrect code | `Incorrect code. N attempts remaining.` |
+| Wrong OTP | any incorrect code on sign-up or reset | `Incorrect code. N attempts remaining.` |
 | Validation | submit an empty form | inline errors, no network call |
-| Sign up | **Create one** → fill in → the emailed OTP | new account, signed in |
+| Sign up | **Create one** → fill in → the emailed OTP | account confirmed, then sign in |
 | Forgot password | **Forgot password?** → OTP → new password | can sign in with the new one |
 | Persistence | reload the page while signed in | still signed in |
 | Cross-tab logout | open a second tab, log out in one | the other tab signs out too |
@@ -174,14 +247,16 @@ npm install github:Nishan666/auth-client
 `auth_tokens`, holds the whole bundle:
 
 ```jsonc
-{
-  "id_token": "…", "access_token": "…", "refresh_token": "…",
-  "session_token": "…", "token_type": "Bearer", "expires_in": 300
-}
+{ "id_token": "…", "refresh_token": "…" }
 ```
 
-Refreshes replace it atomically and rotate the refresh token; the previous one is
-revoked. Logging out clears the key.
+The platform API issues an `idToken` and a `refreshToken` only — no
+`accessToken`, `expires_in` or `session_token` — so `accessToken` on state reads
+`null`. The store normalises camelCase, snake_case and nested `data.*` inputs
+alike, and preserves any extra fields a deployment adds, so a richer bundle
+needs no code change.
+
+Refreshes replace the bundle atomically. Logging out clears the key.
 
 ---
 
@@ -196,11 +271,11 @@ import { createAuthClient } from '@7edge/auth-client/core'
 
 const auth = createAuthClient({ baseURL: 'https://api.example.com/api' })
 
-// Sign-in is two steps: credentials, then the OTP that completes it.
-const started = await auth.login({ email, password })
-if (!started.error) {
-  await auth.verifyOtp({ identifier: email, otp: '123456' })
-}
+// Sign-in is one step — it returns the session, no OTP.
+const { error, data } = await auth.login({ email, password })
+
+// verifyOtp is for confirming a new sign-up, not for signing in.
+await auth.verifyOtp({ identifier: email, otp: '123456' })
 
 auth.getState()            // { isAuthenticated, user, idToken, accessToken, isLoading, error }
 auth.subscribe(console.log) // returns an unsubscribe fn
@@ -233,13 +308,13 @@ createAuthClient({
 | Session | Tokens | State / lifecycle |
 |---|---|---|
 | `signUp` | `refreshToken()` | `getState` |
-| `signIn` / `login` | `fetchTokens` | `subscribe` |
-| `verifyOtp` | `getTokens` | `connect` / `disconnect` |
-| `resendOtp` | `getIdToken` | `destroy` |
-| `forgotPassword` | `getAccessToken` | |
-| `verifyResetOtp` | `getRefreshToken` | |
-| `resetPassword` | `getValidToken` | |
-| `changePassword` | `expiresIn` | |
+| `signIn` / `login` | `getTokens` | `subscribe` |
+| `verifyOtp` | `getIdToken` | `clearError` |
+| `resendOtp` | `getAccessToken` | `connect` / `disconnect` |
+| `forgotPassword` | `getRefreshToken` | `destroy` |
+| `verifyResetOtp` | `getValidToken` | |
+| `resetPassword` | `expiresIn` | |
+| `changePassword` | | |
 | `deleteAccount` | | |
 | `signOut` / `logout` | | |
 
@@ -314,6 +389,37 @@ Tokens: `bg`, `surface`, `border`, `border-strong`, `fg`, `muted`, `subtle`,
 `accent`, `accent-fg`, `accent-hover`, `danger`, `success` (+ `-surface`,
 `-border` variants).
 
+##### Editing the scaffolded components
+
+`src/auth/components/` are your files, and their markup, structure, props and
+copy are freely editable. Their **class names** come with one caveat worth
+knowing before you reach for it.
+
+Those classes are Tailwind utilities, and `style.css` ships *precompiled* —
+it contains only the utilities the library itself uses. So:
+
+| Edit | Result |
+|---|---|
+| Change markup, props, layout structure, copy | works |
+| Swap to another class the library already uses (`bg-ac-danger`) | works |
+| Add your own plain CSS and use that class | works |
+| Add a **new** Tailwind utility (`bg-purple-600`) | **silently does nothing** |
+
+The last row is the trap: nothing errors, the element just renders unstyled.
+Two ways round it —
+
+```css
+/* src/auth/home.css — your file, plain CSS, always works */
+.my-brand-button { background: rgb(147 51 234); }
+```
+
+...then use `my-brand-button` in `components/Button.jsx`. Or install Tailwind
+in your project, at which point every utility is available and the precompiled
+stylesheet becomes redundant.
+
+For recolouring rather than restructuring, the CSS custom properties above are
+the better tool — they need neither.
+
 ### 4. No offline mode
 
 `baseURL` is required and every call goes to your API. There is no in-memory
@@ -329,11 +435,12 @@ exactly that, and it is what the verification suite runs against.
 Modelled on the ORDO host app (`src/helpers/tokenManager.js`), so both agree on
 the contract the real API will use.
 
-- **One bundle, one key.** `{ id_token, access_token, refresh_token,
-  session_token, expires_in, token_type }` persisted as a single JSON blob under
-  `auth_tokens`, so a refresh swaps it atomically — no window where a new
-  `id_token` sits beside a stale `refresh_token`. camelCase, nested `data.*` and
-  snake_case inputs are all normalised on the way in.
+- **One bundle, one key.** Persisted as a single JSON blob under `auth_tokens`,
+  so a refresh swaps it atomically — no window where a new `id_token` sits
+  beside a stale `refresh_token`. The deployed API returns `idToken` and
+  `refreshToken` only; camelCase, snake_case and nested `data.*` inputs are all
+  normalised, and unknown fields are preserved, so a deployment that adds
+  `accessToken` or `expires_in` needs no code change.
 - **Proactive refresh.** Requests check `exp` first and renew inside a 30s skew,
   so the request goes out valid instead of 401-ing and being retried.
 - **Single-flight lock.** Concurrent callers queue behind one refresh — verified:
@@ -397,8 +504,36 @@ Create React App `process.env.REACT_APP_…`, Next.js `process.env.NEXT_PUBLIC_�
 **`src/auth/` was not created.** Install scripts are disabled in your
 environment. Run `npx auth-client init`.
 
+**The install did not ask me anything.** By design — it only scaffolds
+`src/auth/` and prints what to run next. See
+[Why the install does not just ask you there and then](#2-install-the-auth-package).
+
+**I did not see the install's notice.** npm hides a lifecycle script's output
+unless you pass `--foreground-scripts`. The notice is written to your terminal
+directly to get around that, but if there is none — CI, a Docker build, piped
+output — it is only in `src/auth/NEXT-STEPS.txt`.
+
+**Re-installing does not resume.** npm only runs install hooks when it actually
+installs something; a second `npm install github:Nishan666/auth-client` prints
+`up to date` and runs nothing, `--force` included. Use
+`npx auth-client setup` — it reads the progress record and picks up where you
+stopped. `npx auth-client status` shows what is outstanding.
+
+**It asked about a step I already declined.** It should not — a declined step is
+recorded. If `src/auth/.auth-client.json` was deleted, state is re-derived from
+the files, and a decline is indistinguishable from never having asked.
+Harmless: answer no again.
+
+**I want my original `main.jsx` / `App.jsx` back.** `npx auth-client undo`
+restores them from the `.bak` files `wire` wrote. If you have since deleted the
+backups, copy the two files from the Getting started section.
+
+**`setup` says "not a terminal — skipping".** You are piping it or running it
+in CI, where it cannot ask. Pass `--yes` to accept every step, or run the
+individual `env` / `wire` commands, which never prompt.
+
 **Screens look unstyled.** `import '@7edge/auth-client/style.css'` is missing
-from `src/main.jsx`.
+from `src/main.jsx` — `npx auth-client wire` adds it.
 
 **`useAuth() must be used within an <AuthProvider>`.** The component calling
 `useAuth()` is outside the provider — the provider has to wrap it, so it cannot
@@ -549,8 +684,7 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
   published under that name. Scoping is also required by GitHub Packages and
   Azure Artifacts.
 - **Token storage moved to a single key.** Tokens now live as one JSON bundle
-  under `auth_tokens` (`{ id_token, access_token, refresh_token, session_token,
-  … }`) instead of one key per token. A refresh now swaps the bundle atomically.
+  under `auth_tokens` instead of one key per token. A refresh now swaps the bundle atomically.
   `DEFAULT_STORAGE_KEYS` is `{ TOKENS, USER }`; `ID_TOKEN` / `REFRESH_TOKEN` are
   gone. **Existing sessions will not migrate — users are signed out once.**
 - **`refreshToken` is no longer on state.** It was both a state field (the token
@@ -591,22 +725,60 @@ Publishing would need `prepublishOnly` (lint + build) added back, and the
 - Theming via CSS custom properties + `applyTheme()` / `resetTheme()` and an
   `AuthProvider theme` prop.
 - `Alert` component, shared `validation.js`, and `inputClassName`.
-- **`npx auth-client init` CLI** — the manual equivalent of the postinstall
-  hook, for re-scaffolding (`--force`), a different location (`--dir`), or
-  environments where install scripts are disabled. The ejected screens are
-  generated *from* `src/ui/` at build time, so they cannot drift from what the
-  library ships.
-- **Automatic scaffolding on install.** A `postinstall` hook writes `src/auth/`
-  and `.env` into the consuming project, so `npm install` is the only command
-  needed. It never overwrites existing files, never rewrites an existing
-  `VITE_API_BASE_URL`, and never fails an install — errors fall back to a
-  printed `npx auth-client init`.
+- **`npx auth-client` CLI** — `setup` (interactive), plus `init`, `env`,
+  `wire` and `undo` as individual steps, with `--yes`, `--force` and `--dir`.
+  The ejected screens are generated *from* `src/ui/` at build time, so they
+  cannot drift from what the library ships.
+- **Scaffolding on install, scoped to `src/auth/`.** A `postinstall` hook
+  writes the auth folder — the package's own territory — and nothing else
+  without consent. It never overwrites existing files and never fails an
+  install.
+- **Install, then one command.** `npm install` scaffolds `src/auth/` and
+  prints a notice naming the next step; `npx auth-client setup` asks about
+  `.env` and the app wiring. Prompting *during* the install was built and then
+  removed: npm repaints the cursor's line ~40 times a second and erases
+  anything on it, and the terminal's input buffer carries escape-sequence
+  replies to shell prompt themes, one of which was read as an answer and made
+  the question cancel itself unprompted. The hook now writes to `/dev/tty`
+  (npm hides its stdout) but never reads, so it cannot stall an install.
+- **Resumable setup.** Each answer is recorded in
+  `src/auth/.auth-client.json` as it is given, so an interrupted run continues
+  from the step it stopped on. A declined step is not re-asked (`setup --all`
+  re-offers it); an unanswered one is. The file is derived state — delete it
+  and it is rebuilt from the files. `npx auth-client status` prints what is
+  outstanding, and there is no time limit on an answer.
+- **A closing summary.** `setup` ends with what changed, what to do next, and
+  how to undo it — including which `.bak` files are waiting.
+- **A fully ejected `src/auth/`.** The screens' primitives
+  (`components/`), the field rules (`validation.js`) and the UI constants are
+  now local files too, so `useAuth` is the only thing a generated file imports
+  from the package. Restyling or restructuring no longer needs a fork. Note
+  that `style.css` is precompiled: a brand-new Tailwind utility will not exist
+  in it — use plain CSS or install Tailwind. See *Editing the scaffolded
+  components*.
+- **No config file in the project.** `authConfig` and `API_BASE_URL` moved
+  into the package, at `@7edge/auth-client/config`. It ships unbundled, because
+  Vite substitutes `import.meta.env` at build time and bundling it would bake
+  in an empty string instead of reading the consumer's `.env`. A missing or
+  placeholder base URL now throws from `createAuthClient` with the fix in the
+  message.
+- **Resumable setup.** Each answer is recorded in
+  `src/auth/.auth-client.json` as it is given, so an interrupted run continues
+  from the step it stopped on. A declined step is not re-asked (`setup --all`
+  re-offers it); an unanswered one is. The file is a convenience — delete it
+  and state is re-derived from the files themselves. `npx auth-client status`
+  prints what is outstanding.
+- **A real home page from `wire`.** `src/App.jsx` now generates a working
+  signed-in view: a Session panel with the live idToken countdown, decoded JWT
+  claims and a Force refresh button, plus Change password / Delete account.
+  Styled by `src/auth/home.css`, which builds on the library's theme variables.
 - **Moved to its own repository**, with the package at the root. npm cannot
   install from a subdirectory of a repo, which made `npm i github:…` impossible
   while the library lived inside the AuthPlatform monorepo.
-- `scripts/verify-package.mjs` — 28 assertions run against `dist/`, not `src/`,
-  including the exact backend route contract.
-- `prepare` script, so git installs always build from source.
+- `scripts/verify-package.mjs` — 66 assertions run against `dist/`, not `src/`,
+  covering the backend route contract, the install/setup contract (`.env` is
+  appended never replaced, `undo` restores byte for byte) and the resume logic
+  (an interrupted step is offered again, a completed one never is).
 
 #### Changed
 
