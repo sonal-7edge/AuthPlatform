@@ -23,7 +23,6 @@ export const AUTH_ENDPOINTS = {
   RESET_PASSWORD: '/auth/reset-password',
   CHANGE_PASSWORD: '/auth/change-password',
   DELETE_ACCOUNT: '/auth/delete-account',
-  TOKENS: '/auth/tokens',
   REFRESH: '/auth/refresh',
   LOGOUT: '/auth/logout',
 }

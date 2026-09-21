@@ -15,7 +15,7 @@ import Alert from '../components/Alert'
  * @param {{ onDeleted?: () => void, onCancel?: () => void }} props
  */
 export default function DeleteAccount({ onDeleted, onCancel }) {
-  const { deleteAccount, isLoading, error, user } = useAuth()
+  const { deleteAccount, isLoading, error, clearError, user } = useAuth()
 
   const [password, setPassword] = useState('')
   const [acknowledged, setAcknowledged] = useState(false)
@@ -75,7 +75,11 @@ export default function DeleteAccount({ onDeleted, onCancel }) {
           label="Confirm your password"
           placeholder="Enter your password"
           value={password}
-          onChange={(event) => setPassword(event.target.value)}
+          onChange={(event) => {
+            if (error) clearError()
+            if (fieldError) setFieldError('')
+            setPassword(event.target.value)
+          }}
           error={fieldError}
           autoComplete="current-password"
           disabled={!acknowledged}

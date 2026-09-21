@@ -1,1 +1,0 @@
-Object.defineProperty(exports,Symbol.toStringTag,{value:`Module`});const e=require("../createAuthClient-BvHHDHnT.cjs");exports.AUTH_ENDPOINTS=e.i,exports.DEFAULT_STORAGE_KEYS=e.a,exports.IDENTIFIER_TYPE=e.o,exports.OTP_LENGTH=e.s,exports.OTP_PURPOSE=e.c,exports.createAuthClient=e.t,exports.createTokenStore=e.r,exports.handleErrorResponse=e.n;

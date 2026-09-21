@@ -1,6 +1,14 @@
 import axios from 'axios'
 import { AUTH_ENDPOINTS } from './constants'
 
+/**
+ * Routes that authenticate the user again inside the request body, so a 401
+ * from them may mean "wrong password" rather than "bad token".
+ */
+function carriesCredentials(url, routes) {
+  return [routes.CHANGE_PASSWORD, routes.DELETE_ACCOUNT].some((route) => url.includes(route))
+}
+
 /** Requests that must never trigger a refresh before they are sent. */
 function skipsAuthRefresh(url = '') {
   // Refreshing before the refresh call itself would recurse forever.
@@ -23,7 +31,8 @@ function skipsAuthRefresh(url = '') {
  *           single-flight lock lives in tokenManager, so concurrent 401s share
  *           one refresh.
  */
-export function createHttpClient({ baseURL, tokenStore, tokenManager, onForceLogout, headers }) {
+export function createHttpClient({ baseURL, tokenStore, tokenManager, headers, endpoints }) {
+  const routes = { ...AUTH_ENDPOINTS, ...endpoints }
   const instance = axios.create({ baseURL, headers })
 
   instance.interceptors.request.use(async (config) => {
@@ -51,6 +60,21 @@ export function createHttpClient({ baseURL, tokenStore, tokenManager, onForceLog
         return Promise.reject(error)
       }
 
+      /**
+       * A 401 from a route that takes a password in its body is ambiguous:
+       * this API returns it for a wrong `currentPassword` and a wrong
+       * delete-account `password`, not just for a bad token. Refreshing there
+       * spends a needless round-trip and rotates a perfectly good session
+       * because someone mistyped — so surface the original error instead.
+       *
+       * Every other authenticated route only 401s about the token, and those
+       * still refresh and replay: that is what covers clock skew and
+       * server-side revocation, where the token looks fine locally.
+       */
+      if (carriesCredentials(originalRequest.url ?? '', routes)) {
+        return Promise.reject(error)
+      }
+
       originalRequest._retry = true
 
       try {
@@ -61,7 +85,8 @@ export function createHttpClient({ baseURL, tokenStore, tokenManager, onForceLog
         originalRequest.headers.Authorization = `Bearer ${newToken}`
         return instance(originalRequest)
       } catch {
-        onForceLogout?.()
+        // tokenManager owns the force-logout decision: it only tears the
+        // session down when the stored token is actually expired.
         return Promise.reject(error)
       }
     }
