@@ -1,67 +1,164 @@
 #!/usr/bin/env node
 /**
- * Runs automatically after `npm install @7edge/auth-client`, scaffolding
- * src/auth/ and .env into the installing project so no second command is needed.
+ * Runs after `npm install @7edge/auth-client`.
+ *
+ * It scaffolds `src/auth/` — mandatory, purely additive, the package's own
+ * territory — then says so and points at the one command that finishes the
+ * job. It asks nothing.
+ *
+ * It does not ask because an install hook cannot do it reliably. Two reasons,
+ * both found the hard way:
+ *
+ *   · npm repaints the cursor's line for the whole install, about 40 times a
+ *     second, erasing anything sharing it. That cannot be silenced from in
+ *     here: --foreground-scripts does not stop it, spawnSync does not block
+ *     it, and process.ppid is the shell npm spawned rather than npm itself.
+ *   · the terminal's input buffer is not ours to consume. Shell prompt themes
+ *     issue terminal queries whose replies arrive there as escape sequences,
+ *     and reading one as an answer made the question cancel itself before the
+ *     user had touched the keyboard.
+ *
+ * Writing is safe, though, and worth doing: npm hides a lifecycle script's
+ * stdout unless --foreground-scripts is passed, so the notice goes to
+ * /dev/tty, still the user's real terminal. Failing that it goes to stdout,
+ * and either way it is left in the project as src/auth/NEXT-STEPS.txt.
  *
  * Rules this hook holds itself to:
- *  - It NEVER fails the install. Any error is reported and swallowed; a
- *    scaffolding problem must not break `npm install` for the whole project.
- *  - It never overwrites. Existing files are skipped, and an existing
- *    VITE_API_BASE_URL is left untouched — so reinstalling is safe.
- *  - It does nothing when there is no consuming project (developing this
- *    package itself, or a transitive/CI install with no INIT_CWD).
- *
- * npm may block install scripts entirely (`--ignore-scripts`, or npm's
- * allow-scripts prompt). In that case nothing here runs at all, and
- * `npx auth-client init` is the manual equivalent — see the README.
+ *  - It NEVER fails the install. Any error is swallowed, exit code is 0.
+ *  - It never reads input, so it can never stall an install.
+ *  - It never overwrites; existing files are left alone.
+ *  - It touches nothing outside src/auth/.
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync, writeSync, openSync, closeSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
-import { scaffold, nextSteps, PKG_ROOT, TEMPLATES, pkg, c } from './scaffold.mjs'
+import { scaffoldAuth, recordStep, stepStatus, clearNote, TEMPLATES, ENV_KEY, pkg } from './scaffold.mjs'
 
-/** The directory the user ran `npm install` in, per npm. */
 const project = process.env.INIT_CWD
+const tag = `[${pkg.name}]`
 
-function skip(reason) {
-  // Silent by design: these are the normal no-op cases, not problems.
-  if (process.env.AUTH_CLIENT_DEBUG) console.log(`[auth-client] skipped: ${reason}`)
+const c = {
+  dim: (s) => `\x1b[2m${s}\x1b[0m`,
+  bold: (s) => `\x1b[1m${s}\x1b[0m`,
+  green: (s) => `\x1b[32m${s}\x1b[0m`,
+  cyan: (s) => `\x1b[36m${s}\x1b[0m`,
+}
+const width = (line) => line.replace(/\x1b\[[0-9;]*m/g, '').length
+
+function stop(reason) {
+  if (process.env.AUTH_CLIENT_DEBUG) console.log(`${tag} skipped: ${reason}`)
   process.exit(0)
 }
 
-try {
-  if (!project) skip('no INIT_CWD (not a user-initiated install)')
+/**
+ * Writes to the user's terminal, falling back to stdout.
+ *
+ * Ends on a blank line on purpose: npm's progress bar repaints whichever line
+ * the cursor is on, so leaving the cursor below the message keeps the message
+ * itself intact.
+ */
+function announce(text) {
+  let fd
+  try {
+    fd = openSync('/dev/tty', 'w')
+  } catch {
+    process.stdout.write(text) // no terminal — NEXT-STEPS.txt carries it instead
+    return
+  }
+  try {
+    writeSync(fd, text)
+  } finally {
+    closeSync(fd)
+  }
+}
 
-  // Installing this package's own devDependencies while developing it.
-  if (resolve(project) === resolve(PKG_ROOT)) skip('installing our own dependencies')
+function box(lines) {
+  const inner = Math.max(...lines.map(width)) + 2
+  const pad = (line) => line + ' '.repeat(inner - width(line))
+  const rule = '─'.repeat(inner + 1)
+  return [
+    '',
+    c.dim(`  ╭${rule}╮`),
+    ...lines.map((line) => `  ${c.dim('│')} ${pad(line)}${c.dim('│')}`),
+    c.dim(`  ╰${rule}╯`),
+    '',
+    '',
+  ].join('\n')
+}
 
-  // A transitive install: the "project" is itself inside node_modules.
-  if (project.split(sep).includes('node_modules')) skip('transitive install')
-
-  // No package.json means there is no project to scaffold into.
-  if (!existsSync(join(project, 'package.json'))) skip('no package.json in INIT_CWD')
-
-  // For a git install, `prepare` builds dist before this runs. If it somehow
-  // has not, there is nothing to copy — defer to the manual command.
-  if (!existsSync(TEMPLATES)) {
-    console.log(`\n[${pkg.name}] build output not found yet — run ${c.bold('npx auth-client init')} to scaffold.\n`)
-    process.exit(0)
+/**
+ * npm hides this hook's stdout and there may be no terminal, so whatever is
+ * outstanding is also recorded in the project. Rewritten every install so it
+ * always describes the current state, and removed once nothing is left.
+ */
+function writeNote(status) {
+  const pending = ['env', 'wire'].filter((step) => status[step] === 'pending')
+  if (!pending.length) {
+    clearNote({ project })
+    return
   }
 
-  const { created, skipped, dir } = scaffold({ project })
+  const describe = {
+    env: `  · .env         add ${ENV_KEY}                  — npx auth-client env`,
+    wire: '  · app wiring   replace src/main.jsx + App.jsx  — npx auth-client wire',
+  }
 
-  // Nothing to say if a previous install already did the work.
-  if (!created.length) skip('already scaffolded')
+  writeFileSync(join(project, 'src', 'auth', 'NEXT-STEPS.txt'), [
+    `${pkg.name} v${pkg.version}`,
+    '',
+    'src/auth/ is in place. Still to do:',
+    '',
+    ...pending.map((step) => describe[step]),
+    '',
+    'One command walks you through what is left:',
+    '',
+    '    npx auth-client setup',
+    '',
+    'It asks before each step and prints the manual equivalent if you decline.',
+    'Undo the app wiring at any time with:  npx auth-client undo',
+    '',
+    'Delete this file once you are set up.',
+    '',
+  ].join('\n'))
+}
 
-  console.log(`\n${c.bold(pkg.name)} ${c.dim(`v${pkg.version}`)}`)
-  created.forEach((f) => console.log(`  ${c.green('created')}  ${f}`))
-  skipped.forEach((f) => console.log(`  ${c.yellow('skipped')}  ${f}`))
-  console.log(nextSteps(dir))
+try {
+  if (!project) stop('no INIT_CWD (not a user-initiated install)')
+  if (resolve(project) === resolve(join(TEMPLATES, '../..'))) stop('installing our own dependencies')
+  if (project.split(sep).includes('node_modules')) stop('transitive install')
+  if (!existsSync(join(project, 'package.json'))) stop('no package.json in INIT_CWD')
+  if (!existsSync(TEMPLATES)) stop('build output not found')
+
+  const { created, skipped } = scaffoldAuth({ project })
+  recordStep({ project, step: 'auth', status: 'done' })
+
+  const status = stepStatus({ project })
+  const pending = ['env', 'wire'].filter((step) => status[step] === 'pending')
+  const count = created.length + skipped.length
+
+  announce(box(
+    pending.length
+      ? [
+        `${c.green('✓')} ${c.bold(pkg.name)} ${c.dim(`v${pkg.version}`)} installed`,
+        '',
+        `  ${c.green('✓')} src/auth/ ${c.dim(`— ${count} files: screens, components, validation`)}`,
+        `  ${c.dim('·')} .env, src/main.jsx, src/App.jsx ${c.dim('— not touched')}`,
+        '',
+        `${c.bold('  Next, run:')}`,
+        `    ${c.cyan('npx auth-client setup')}`,
+        c.dim('    asks before it changes .env, src/main.jsx or src/App.jsx'),
+      ]
+      : [
+        `${c.green('✓')} ${c.bold(pkg.name)} ${c.dim(`v${pkg.version}`)} installed`,
+        '',
+        `  ${c.green('✓')} already set up — nothing left to do`,
+        `    ${c.cyan('npx auth-client status')} ${c.dim('shows the current state')}`,
+      ]
+  ))
+
+  writeNote(status)
+  process.exit(0)
 } catch (error) {
-  // Never break the install.
-  console.log(
-    `\n[${pkg.name}] could not scaffold automatically (${error.message}).` +
-    `\n  Run ${c.bold('npx auth-client init')} to do it manually.\n`
-  )
+  announce(`\n${tag} could not scaffold automatically (${error.message}).\n${tag} run: npx auth-client setup\n\n`)
   process.exit(0)
 }

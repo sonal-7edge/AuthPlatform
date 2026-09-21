@@ -9,7 +9,7 @@ import { IDENTIFIER_TYPE, OTP_PURPOSE } from '../../core/constants'
 import { validateIdentifier } from '../validation'
 
 export default function ForgotPassword({ setFlow }) {
-  const { forgotPassword, isLoading, error } = useAuth()
+  const { forgotPassword, isLoading, error, clearError } = useAuth()
 
   const [identifierType, setIdentifierType] = useState(IDENTIFIER_TYPE.EMAIL)
   const [identifier, setIdentifier] = useState('')
@@ -25,11 +25,7 @@ export default function ForgotPassword({ setFlow }) {
     setFieldError('')
 
     const isEmail = identifierType === IDENTIFIER_TYPE.EMAIL
-    const result = await forgotPassword({
-      identifier: identifier.trim(),
-      identifierType,
-      [isEmail ? 'email' : 'phone']: identifier.trim(),
-    })
+    const result = await forgotPassword({ [isEmail ? 'email' : 'phone']: identifier.trim() })
 
     if (!result.error) {
       setFlow({
@@ -42,6 +38,7 @@ export default function ForgotPassword({ setFlow }) {
   }
 
   function switchIdentifierType(type) {
+    if (error) clearError()
     setIdentifierType(type)
     setIdentifier('')
     setFieldError('')
@@ -67,7 +64,11 @@ export default function ForgotPassword({ setFlow }) {
         <IdentifierInput
           type={identifierType}
           value={identifier}
-          onChange={(event) => setIdentifier(event.target.value)}
+          onChange={(event) => {
+            if (error) clearError()
+            if (fieldError) setFieldError('')
+            setIdentifier(event.target.value)
+          }}
           error={fieldError}
           onTypeChange={switchIdentifierType}
         />

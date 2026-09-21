@@ -10,6 +10,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { startTestServer } from './test-server.mjs'
 
 const results = []
@@ -23,6 +26,19 @@ async function test(name, fn) {
     failures++
     results.push({ name, ok: false, error })
   }
+}
+
+/**
+ * Source with comments removed.
+ *
+ * These files explain their own terminal handling at length, and asserting
+ * "the code does not do X" against prose that *describes* X gives false
+ * failures. Match against code only.
+ */
+function codeOf(relativePath) {
+  return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
 }
 
 /** localStorage doesn't exist in Node — the pluggable adapter covers for it. */
@@ -70,13 +86,22 @@ function client(config = {}) {
   })
 }
 
-/** A client that has completed sign-up and OTP, plus its storage. */
+/** Reads a JWT payload. The test server's tokens are unsigned by design. */
+function decodeClaims(token) {
+  return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString())
+}
+
+/**
+ * A signed-in client, following the real journey: sign up, confirm the account
+ * with the emailed code, then sign in. Confirming does not authenticate.
+ */
 async function signedIn(config = {}) {
   const storage = config.storage ?? memoryStorage()
   const auth = client({ ...config, storage })
   const email = config.email ?? EMAIL
   await auth.signUp({ email, password: PASSWORD, firstName: 'Ver', lastName: 'Ify' })
   await auth.verifyOtp({ identifier: email, otp: server.OTP })
+  await auth.signIn({ email, password: PASSWORD })
   return { auth, storage, email }
 }
 
@@ -107,7 +132,7 @@ await test('client exposes every documented method', () => {
     'signUp', 'signIn', 'login', 'verifyOtp', 'resendOtp',
     'forgotPassword', 'verifyResetOtp', 'resetPassword',
     'changePassword', 'deleteAccount', 'signOut', 'logout',
-    'fetchTokens', 'refreshToken', 'getTokens', 'getIdToken',
+    'refreshToken', 'getTokens', 'getIdToken',
     'getAccessToken', 'getRefreshToken', 'getValidToken', 'expiresIn',
     'getState', 'subscribe', 'connect', 'disconnect', 'destroy',
   ]
@@ -122,7 +147,7 @@ await test('baseURL is required', () => {
   // Without an in-memory fallback, a missing baseURL would silently send every
   // request to the current origin. Fail loudly instead.
   assert.throws(() => createAuthClient({ crossTab: false, storage: memoryStorage() }),
-    /requires a baseURL/)
+    /VITE_API_BASE_URL|pass it directly/)
 })
 
 await test('endpoints match the backend contract exactly', () => {
@@ -136,7 +161,6 @@ await test('endpoints match the backend contract exactly', () => {
     RESET_PASSWORD: '/auth/reset-password',
     CHANGE_PASSWORD: '/auth/change-password',
     DELETE_ACCOUNT: '/auth/delete-account',
-    TOKENS: '/auth/tokens',
     REFRESH: '/auth/refresh',
     LOGOUT: '/auth/logout',
   })
@@ -166,21 +190,45 @@ await test('sign-up issues an OTP challenge without authenticating', async () =>
   assert.equal(auth.getIdToken(), null)
 })
 
-await test('verifyOtp completes sign-in and persists the contract bundle', async () => {
+await test('signIn authenticates directly — no OTP step', async () => {
   const { auth, email } = await signedIn({ email: 'bundle@example.com' })
 
   const state = auth.getState()
-  assert.equal(state.isAuthenticated, true)
+  assert.equal(state.isAuthenticated, true, 'signIn alone should authenticate')
   assert.equal(state.user.email, email)
 
   const tokens = auth.getTokens()
-  for (const field of ['id_token', 'access_token', 'refresh_token', 'session_token']) {
-    assert.ok(tokens[field], `bundle is missing ${field}`)
-  }
-  assert.equal(tokens.token_type, 'Bearer')
-  assert.equal(typeof tokens.expires_in, 'number')
+  // The API returns camelCase idToken/refreshToken; the store normalises them.
+  assert.ok(tokens.id_token, 'bundle is missing id_token')
+  assert.ok(tokens.refresh_token, 'bundle is missing refresh_token')
   assert.equal(state.idToken, tokens.id_token)
-  assert.equal(state.accessToken, tokens.access_token)
+
+  // The API issues no accessToken, so state exposes null rather than a stale value.
+  assert.equal(state.accessToken, null, 'accessToken should be null — the API issues none')
+})
+
+await test('verifyOtp confirms a new account without authenticating', async () => {
+  const auth = client()
+  const email = 'confirmonly@example.com'
+  await auth.signUp({ email, password: PASSWORD, firstName: 'C', lastName: 'O' })
+
+  const result = await auth.verifyOtp({ identifier: email, otp: server.OTP })
+
+  assert.equal(result.error, false, result.message)
+  assert.equal(auth.getState().isAuthenticated, false,
+    'confirming an account must not authenticate — the user signs in next')
+  assert.equal(auth.getIdToken(), null)
+})
+
+await test('an unconfirmed account cannot sign in', async () => {
+  const auth = client()
+  const email = 'unconfirmed@example.com'
+  await auth.signUp({ email, password: PASSWORD, firstName: 'U', lastName: 'C' })
+
+  const result = await auth.signIn({ email, password: PASSWORD })
+  assert.equal(result.error, true)
+  assert.equal(result.code, 'USER_NOT_CONFIRMED')
+  assert.equal(auth.getState().isAuthenticated, false)
 })
 
 await test('the user object is not smuggled into the token bundle', async () => {
@@ -283,6 +331,38 @@ await test('concurrent refreshes share one round-trip (single-flight lock)', asy
     'all callers must receive the same new token')
 })
 
+await test('refresh carries cognito:username, so a client-secret pool accepts it', async () => {
+  /**
+   * Regression: /auth/refresh used to send the refresh token alone. Cognito
+   * needs a SECRET_HASH when the app client has a client secret, that hash is
+   * an HMAC over the username, and a refresh token is opaque to the backend —
+   * so the call came back 401 "Incorrect credentials" against a real pool
+   * while every other flow worked. This server rejects a refresh whose
+   * username is missing or wrong, the way Cognito does.
+   */
+  const secretPool = await startTestServer({ requireUsername: true })
+  try {
+    const auth = client({ baseURL: secretPool.baseURL })
+    const email = 'secrethash@example.com'
+    await auth.signUp({ email, password: PASSWORD, firstName: 'Se', lastName: 'Cret' })
+    await auth.verifyOtp({ identifier: email, otp: secretPool.OTP })
+    await auth.signIn({ email, password: PASSWORD })
+
+    const claims = decodeClaims(auth.getTokens().id_token)
+
+    const result = await auth.refreshToken()
+    assert.equal(result.error, false, `refresh was rejected: ${result.message}`)
+
+    const sent = secretPool.lastRefreshBody()
+    assert.equal(sent.username, claims['cognito:username'],
+      'refresh must send the cognito:username claim')
+    assert.notEqual(sent.username, claims.sub,
+      'sub is not the username — hashing it would 401 against a real pool')
+  } finally {
+    await secretPool.close()
+  }
+})
+
 await test('getValidToken refreshes proactively inside the expiry skew', async () => {
   // A 20s server TTL against a 30s skew: the token is "expiring" on arrival.
   const shortLived = await startTestServer({ tokenTTL: 20 })
@@ -293,6 +373,7 @@ await test('getValidToken refreshes proactively inside the expiry skew', async (
     })
     await auth.signUp({ email: 'skew@example.com', password: PASSWORD })
     await auth.verifyOtp({ identifier: 'skew@example.com', otp: shortLived.OTP })
+    await auth.signIn({ email: 'skew@example.com', password: PASSWORD })
 
     const initial = auth.getIdToken()
     assert.ok(isExpired(initial, 30), 'precondition: token should sit inside the skew window')
@@ -311,19 +392,38 @@ await test('getValidToken leaves a healthy token alone', async () => {
   assert.equal(await auth.getValidToken(), initial, 'must not refresh a token that is still valid')
 })
 
-await test('a 401 triggers one refresh and replays the request', async () => {
+await test('a 401 on a token-only route refreshes once and replays', async () => {
   const { auth } = await signedIn({ email: 'retry@example.com' })
   const beforeToken = auth.getIdToken()
 
-  // The server rejects the next change-password call exactly once.
-  server.expireNext('/auth/change-password')
+  // logout is Bearer-authenticated and carries no credentials, so a 401 from
+  // it can only mean the token was rejected — exactly the clock-skew and
+  // server-side-revocation case the retry exists for.
+  server.expireNext('/auth/logout')
   const before = server.counts.refresh
 
-  const result = await auth.changePassword({ currentPassword: PASSWORD, newPassword: 'AfterRetry123!' })
+  const result = await auth.logout()
 
   assert.equal(result.error, false, `the retry should have succeeded: ${result.message}`)
   assert.equal(server.counts.refresh - before, 1, 'expected exactly one refresh')
-  assert.notEqual(auth.getIdToken(), beforeToken, 'the replayed request should use a new token')
+  assert.notEqual(beforeToken, null)
+})
+
+await test('a 401 from a password-carrying route does NOT refresh', async () => {
+  const { auth } = await signedIn({ email: 'nopointless@example.com' })
+
+  // This API answers 401 for a wrong currentPassword. Refreshing there would
+  // spend a round-trip and rotate a good session because of a typo.
+  const before = server.counts.refresh
+  const result = await auth.changePassword({
+    currentPassword: 'definitely-wrong', newPassword: 'Whatever12345!',
+  })
+
+  assert.equal(result.error, true)
+  assert.equal(server.counts.refresh - before, 0,
+    'a wrong password must not trigger a token refresh')
+  assert.equal(auth.getState().isAuthenticated, true, 'the session must survive')
+  assert.equal(result.code, 'CURRENT_PASSWORD_INVALID', 'the real error should surface')
 })
 
 await test('authenticated routes carry a Bearer token; pre-auth routes do not', async () => {
@@ -335,12 +435,32 @@ await test('authenticated routes carry a Bearer token; pre-auth routes do not', 
     'change-password must send Authorization: Bearer')
 })
 
-await test('a revoked session forces logout', async () => {
+await test('a failed refresh with a still-valid token does NOT log the user out', async () => {
   let forced = 0
-  const { auth } = await signedIn({ email: 'revoked@example.com', onForceLogout: () => { forced++ } })
+  const { auth } = await signedIn({ email: 'stillvalid@example.com', onForceLogout: () => { forced++ } })
 
-  // Simulate server-side revocation: the stored refresh token is now unknown.
+  // Server-side revocation while the token we hold is still good.
   auth.tokenStore.saveTokens({ refresh_token: 'rt_revoked_by_server' })
+
+  const result = await auth.refreshToken()
+
+  assert.equal(result.error, true, 'the refresh should report failure')
+  assert.equal(forced, 0, 'a typo-triggered 401 must not sign the user out')
+  assert.equal(auth.getState().isAuthenticated, true, 'the session should survive')
+  assert.ok(auth.getIdToken(), 'the still-valid idToken should be kept')
+})
+
+await test('a failed refresh with an expired token forces logout', async () => {
+  let forced = 0
+  const { auth } = await signedIn({ email: 'expired@example.com', onForceLogout: () => { forced++ } })
+
+  // An expired idToken plus an unusable refresh token is an unrecoverable session.
+  const past = Math.floor(Date.now() / 1000) - 3600
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  auth.tokenStore.saveTokens({
+    id_token: `${b64({ alg: 'none' })}.${b64({ sub: 'x', exp: past })}.unsigned`,
+    refresh_token: 'rt_revoked_by_server',
+  })
 
   const result = await auth.refreshToken()
   assert.equal(result.error, true)
@@ -355,14 +475,14 @@ await test('forgot -> verify -> reset, then sign in with the new password', asyn
   const { auth, email } = await signedIn({ email: 'reset@example.com' })
   await auth.logout()
 
-  assert.equal((await auth.forgotPassword({ email, identifier: email })).error, false)
+  assert.equal((await auth.forgotPassword({ email })).error, false)
 
   const verified = await auth.verifyResetOtp({ identifier: email, otp: server.OTP })
   assert.equal(verified.error, false, verified.message)
   assert.ok(verified.data.resetToken, 'no reset token issued')
 
   const NEW = 'BrandNewPass456!'
-  const reset = await auth.resetPassword({ identifier: email, resetToken: verified.data.resetToken, newPassword: NEW })
+  const reset = await auth.resetPassword({ resetToken: verified.data.resetToken, newPassword: NEW })
   assert.equal(reset.error, false, reset.message)
 
   assert.equal((await auth.signIn({ email, password: PASSWORD })).error, true, 'the old password must stop working')
@@ -372,7 +492,7 @@ await test('forgot -> verify -> reset, then sign in with the new password', asyn
 await test('a reset token cannot be replayed', async () => {
   const { auth, email } = await signedIn({ email: 'replay@example.com' })
   await auth.logout()
-  await auth.forgotPassword({ identifier: email })
+  await auth.forgotPassword({ email })
   const { data } = await auth.verifyResetOtp({ identifier: email, otp: server.OTP })
 
   await auth.resetPassword({ resetToken: data.resetToken, newPassword: 'FirstReset123!' })
@@ -420,6 +540,28 @@ await test('logout clears storage and revokes the refresh token server-side', as
   assert.equal(reuse.error, true, 'the refresh token should be revoked on logout')
 })
 
+await test('clearError() dismisses a surfaced error', async () => {
+  const auth = client()
+
+  const failed = await auth.signIn({ email: 'nobody@example.com', password: 'whatever1' })
+  assert.equal(failed.error, true)
+  assert.equal(auth.getState().error, failed.message, 'the error should be on state')
+
+  auth.clearError()
+  assert.equal(auth.getState().error, null, 'clearError() left the error in place')
+})
+
+await test('clearError notifies subscribers so the UI re-renders', async () => {
+  const auth = client()
+  await auth.signIn({ email: 'nobody@example.com', password: 'whatever1' })
+
+  const seen = []
+  auth.subscribe((state) => seen.push(state.error))
+  auth.clearError()
+
+  assert.deepEqual(seen, [null], 'subscribers must be told, or the banner stays on screen')
+})
+
 // ── 5. State, storage and errors ────────────────────────────────────────────
 
 await test('subscribers are notified on state changes', async () => {
@@ -429,6 +571,7 @@ await test('subscribers are notified on state changes', async () => {
 
   await auth.signUp({ email: 'subs@example.com', password: PASSWORD })
   await auth.verifyOtp({ identifier: 'subs@example.com', otp: server.OTP })
+  await auth.signIn({ email: 'subs@example.com', password: PASSWORD })
 
   assert.ok(seen.length > 0, 'subscriber never fired')
   assert.equal(seen.at(-1), true, 'final state should be authenticated')
@@ -481,6 +624,312 @@ await test('an unreachable server yields a network error, not a crash', async ()
   assert.equal(result.code, 'NETWORK_ERROR')
   assert.match(result.message, /Could not reach the server/)
 })
+
+// ── the install / setup contract ────────────────────────────────────────────
+// These guard the promise the README makes: `npm install` creates src/auth/
+// and touches nothing else; every other change is opt-in and reversible.
+
+const scaffold = await import('../dist/bin/scaffold.mjs')
+
+/** A throwaway project that looks enough like a Vite starter. */
+function fakeProject() {
+  const dir = mkdtempSync(join(tmpdir(), 'ac-verify-'))
+  mkdirSync(join(dir, 'src'), { recursive: true })
+  writeFileSync(join(dir, 'src', 'main.jsx'), 'ORIGINAL MAIN\n')
+  writeFileSync(join(dir, 'src', 'App.jsx'), 'ORIGINAL APP\n')
+  writeFileSync(join(dir, 'package.json'), '{"name":"fake"}\n')
+  return dir
+}
+const listing = (dir) => readdirSync(dir, { recursive: true }).sort()
+const temps = []
+const project = () => { const d = fakeProject(); temps.push(d); return d }
+
+await test('install scaffolds src/auth and touches nothing else', () => {
+  const dir = project()
+  const before = listing(dir)
+  scaffold.scaffoldAuth({ project: dir })
+  const added = listing(dir).filter((f) => !before.includes(f))
+  assert.ok(added.length > 5, 'expected src/auth to be populated')
+  assert.ok(
+    added.every((f) => f.startsWith('src/auth')),
+    `install wrote outside src/auth: ${added.filter((f) => !f.startsWith('src/auth')).join(', ')}`
+  )
+  assert.equal(readFileSync(join(dir, 'src', 'App.jsx'), 'utf8'), 'ORIGINAL APP\n')
+  assert.equal(existsSync(join(dir, '.env')), false, 'install must not create .env')
+})
+
+await test('a second install leaves edited screens alone', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  const screen = join(dir, 'src/auth/screens/SignIn.jsx')
+  writeFileSync(screen, '// my edits\n')
+  const { created, skipped } = scaffold.scaffoldAuth({ project: dir })
+  assert.equal(created.length, 0)
+  assert.ok(skipped.length > 5)
+  assert.equal(readFileSync(screen, 'utf8'), '// my edits\n')
+})
+
+await test('--force overwrites an edited screen', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  const screen = join(dir, 'src/auth/screens/SignIn.jsx')
+  writeFileSync(screen, '// my edits\n')
+  scaffold.scaffoldAuth({ project: dir, force: true })
+  assert.notEqual(readFileSync(screen, 'utf8'), '// my edits\n')
+})
+
+await test('writeEnv appends to an existing .env instead of replacing it', () => {
+  const dir = project()
+  writeFileSync(join(dir, '.env'), 'VITE_OTHER=keep-me\n')
+  const result = scaffold.writeEnv({ project: dir })
+  assert.equal(result.action, 'appended')
+  const env = readFileSync(join(dir, '.env'), 'utf8')
+  assert.match(env, /VITE_OTHER=keep-me/, 'clobbered the existing .env')
+  assert.match(env, new RegExp(scaffold.ENV_KEY))
+})
+
+await test('writeEnv leaves an existing VITE_API_BASE_URL untouched', () => {
+  const dir = project()
+  writeFileSync(join(dir, '.env'), `${scaffold.ENV_KEY}=https://mine.example/v1\n`)
+  assert.equal(scaffold.writeEnv({ project: dir }).action, 'skipped')
+  assert.equal(
+    readFileSync(join(dir, '.env'), 'utf8'),
+    `${scaffold.ENV_KEY}=https://mine.example/v1\n`
+  )
+})
+
+await test('the .env template ships a placeholder, never a live URL', () => {
+  const template = readFileSync(join(scaffold.TEMPLATES, 'env'), 'utf8')
+  assert.match(template, /REPLACE-ME/, 'placeholder missing')
+  assert.match(template, /^#/m, 'no comment explaining what to replace')
+})
+
+await test('wire backs up main.jsx and App.jsx before replacing them', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  const { written, backedUp } = scaffold.wireApp({ project: dir })
+  assert.equal(written.length, 2)
+  assert.equal(backedUp.length, 2)
+  assert.equal(readFileSync(join(dir, 'src/main.jsx.bak'), 'utf8'), 'ORIGINAL MAIN\n')
+  assert.equal(readFileSync(join(dir, 'src/App.jsx.bak'), 'utf8'), 'ORIGINAL APP\n')
+  assert.match(readFileSync(join(dir, 'src/main.jsx'), 'utf8'), /auth-client\/style\.css/)
+  assert.match(readFileSync(join(dir, 'src/App.jsx'), 'utf8'), /from '\.\/auth'/)
+})
+
+await test('undo restores the originals byte for byte', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.wireApp({ project: dir })
+  const { restored } = scaffold.undoWiring({ project: dir })
+  assert.equal(restored.length, 2)
+  assert.equal(readFileSync(join(dir, 'src/main.jsx'), 'utf8'), 'ORIGINAL MAIN\n')
+  assert.equal(readFileSync(join(dir, 'src/App.jsx'), 'utf8'), 'ORIGINAL APP\n')
+  assert.equal(existsSync(join(dir, 'src/App.jsx.bak')), false, 'backup left behind')
+  assert.ok(existsSync(join(dir, 'src/auth/index.js')), 'undo must not remove src/auth')
+})
+
+await test('isWired only reports true once App.jsx imports ./auth', () => {
+  const dir = project()
+  assert.equal(scaffold.isWired({ project: dir }), false)
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.wireApp({ project: dir })
+  assert.equal(scaffold.isWired({ project: dir }), true)
+})
+
+await test('the CLI exposes setup, init, env, wire and undo', () => {
+  const cli = readFileSync(new URL('../dist/bin/auth-client.mjs', import.meta.url), 'utf8')
+  for (const command of ['setup', 'init', 'env', 'wire', 'undo']) {
+    assert.match(cli, new RegExp(`case '${command}'`), `missing command: ${command}`)
+  }
+})
+
+await test('postinstall never reads input and never touches your files', () => {
+  const code = codeOf('../dist/bin/postinstall.mjs')
+
+  // It may WRITE to the terminal — npm hides a hook's stdout, so that is the
+  // only way the notice is seen. It must never READ: the terminal's input
+  // buffer holds escape-sequence replies to shell prompt themes, and consuming
+  // one as an answer made the question cancel itself unprompted.
+  assert.doesNotMatch(code, /openSync\('\/dev\/tty', 'r'\)/, 'the hook must not read the terminal')
+  assert.doesNotMatch(code, /setRawMode|createInterface|spawnSync/, 'the hook must not prompt')
+  assert.match(code, /openSync\('\/dev\/tty', 'w'\)/, 'the notice must reach the terminal npm hides output from')
+
+  // And it must stay inside its own territory.
+  assert.doesNotMatch(code, /writeEnv/, 'postinstall must not write .env')
+  assert.doesNotMatch(code, /wireApp/, 'postinstall must not rewrite app files')
+  assert.match(code, /catch/, 'postinstall must swallow its own errors')
+  assert.match(code, /exit\(0\)/, 'postinstall must always exit 0')
+
+  // It has to name the command that finishes the job.
+  const source = readFileSync(new URL('../dist/bin/postinstall.mjs', import.meta.url), 'utf8')
+  assert.match(source, /npx auth-client setup/, 'the notice must point at the next command')
+})
+
+await test('a cancelled question is left pending, and nothing times out', () => {
+  const cli = codeOf('../dist/bin/auth-client.mjs')
+  assert.match(cli, /createInterface/, 'setup owns the terminal, so readline is the right tool')
+  // One interface for the run: closing one discards input typed ahead.
+  assert.equal([...cli.matchAll(/createInterface\(/g)].length, 1, 'exactly one readline for the whole run')
+  // No deadline on an answer, anywhere.
+  assert.doesNotMatch(cli, /setTimeout/, 'questions must not time out')
+  assert.doesNotMatch(codeOf('../dist/bin/postinstall.mjs'), /setTimeout|timeout:/, 'the install must impose no deadline')
+  // Cancel must be distinguishable from a decline.
+  assert.match(cli, /answer === false/, 'decline must be distinguished from cancelled')
+  assert.match(cli, /status: 'declined'/, 'a decline must be recorded')
+})
+
+await test('no prompt library is shipped to consumers', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.deepEqual(Object.keys(pkg.dependencies ?? {}), ['axios'],
+    'the install no longer prompts, so it needs no prompt library')
+})
+
+await test('setup ends with a summary that covers undo', () => {
+  const cli = readFileSync(new URL('../dist/bin/auth-client.mjs', import.meta.url), 'utf8')
+  assert.match(cli, /function summary/, 'no closing summary')
+  assert.match(cli, /auth-client undo/, 'the summary must say how to undo')
+  // Box padding is computed on visible width, so colour codes must be stripped
+  // before measuring or every line is short by the length of its escapes.
+  assert.match(cli, /replace\(\/\\x1b\\\[\[0-9;\]\*m\/g, ''\)/, 'box width must ignore ANSI codes')
+})
+
+await test('a fresh project reports every step pending', () => {
+  const dir = project()
+  const status = scaffold.stepStatus({ project: dir })
+  assert.deepEqual(status, { auth: 'pending', env: 'pending', wire: 'pending' })
+  assert.equal(scaffold.nextStep({ project: dir }), 'auth')
+})
+
+await test('setup interrupted at .env resumes at .env, not from the start', () => {
+  const dir = project()
+  // What an install that got as far as the .env question leaves behind.
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.recordStep({ project: dir, step: 'auth', status: 'done' })
+
+  const status = scaffold.stepStatus({ project: dir })
+  assert.equal(status.auth, 'done', 'the finished step must not be redone')
+  assert.equal(status.env, 'pending')
+  assert.equal(scaffold.nextStep({ project: dir }), 'env', 'must resume at env')
+})
+
+await test('an answered step is never asked again', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.writeEnv({ project: dir })
+  scaffold.recordStep({ project: dir, step: 'env', status: 'done' })
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'done')
+  assert.equal(scaffold.nextStep({ project: dir }), 'wire')
+})
+
+await test('a declined step is remembered, so re-running does not nag', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.recordStep({ project: dir, step: 'env', status: 'declined' })
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'declined')
+  assert.equal(scaffold.nextStep({ project: dir }), 'wire', 'declined must not block the next step')
+})
+
+await test('the filesystem overrides a stale state file', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  // Claim nothing is done while the work is visibly present.
+  writeFileSync(join(dir, scaffold.STATE_FILE), JSON.stringify({ steps: {} }))
+  scaffold.writeEnv({ project: dir })
+  scaffold.wireApp({ project: dir })
+  const status = scaffold.stepStatus({ project: dir })
+  assert.deepEqual(status, { auth: 'done', env: 'done', wire: 'done' })
+})
+
+await test('deleting the state file does not re-run completed steps', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  scaffold.writeEnv({ project: dir })
+  rmSync(join(dir, scaffold.STATE_FILE), { force: true })
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'done')
+})
+
+await test('a corrupt state file degrades instead of throwing', () => {
+  const dir = project()
+  scaffold.scaffoldAuth({ project: dir })
+  writeFileSync(join(dir, scaffold.STATE_FILE), 'not json {{{')
+  assert.doesNotThrow(() => scaffold.stepStatus({ project: dir }))
+  assert.equal(scaffold.stepStatus({ project: dir }).env, 'pending')
+})
+
+await test('the state file lives inside src/auth, not the project root', () => {
+  assert.match(scaffold.STATE_FILE, /^src\/auth\//)
+})
+
+await test('the generated folder is self-contained', () => {
+  const files = readdirSync(join(scaffold.TEMPLATES, 'auth'), { recursive: true })
+    .filter((f) => /\.(jsx?|css)$/.test(f))
+  assert.ok(files.length >= 18, `expected screens + components locally, got ${files.length}`)
+
+  // Only the auth engine may come from the package. Everything visual — the
+  // screens AND the primitives they are built from — has to be local, or a
+  // project cannot restyle without forking.
+  const allowed = new Set(["'@7edge/auth-client'", "'@7edge/auth-client/config'"])
+  const offenders = []
+  for (const file of files) {
+    const source = readFileSync(join(scaffold.TEMPLATES, 'auth', file), 'utf8')
+    for (const [, clause, spec] of source.matchAll(/import\s+([^;]+?)\s+from\s+('[^']+')/g)) {
+      if (!allowed.has(spec)) continue
+      const names = clause.replace(/[{}]/g, '').split(',').map((n) => n.trim()).filter(Boolean)
+      const extra = names.filter((n) => n !== 'useAuth')
+      if (extra.length) offenders.push(`${file}: ${extra.join(', ')}`)
+    }
+  }
+  assert.deepEqual(offenders, [], `these should be local files, not package imports — ${offenders.join(' | ')}`)
+  return `${files.length} local files, only useAuth from the package`
+})
+
+await test('no config file is dumped into the project', () => {
+  const files = readdirSync(join(scaffold.TEMPLATES, 'auth'), { recursive: true })
+  assert.ok(!files.includes('config.js'), 'config.js must live in the package, not src/auth')
+  const barrel = readFileSync(join(scaffold.TEMPLATES, 'auth/index.js'), 'utf8')
+  assert.match(barrel, /from '@7edge\/auth-client\/config'/, 'the barrel should pull config from the package')
+})
+
+await test('the config subpath ships unbundled so the consumer resolves the env', () => {
+  // Bundling it would let OUR build substitute import.meta.env and bake in an
+  // empty string. It has to reach the consumer as plain source.
+  const config = readFileSync(new URL('../dist/config.js', import.meta.url), 'utf8')
+  assert.match(config, /import\.meta\.env\?\.VITE_API_BASE_URL/, 'the env read was substituted away')
+  const root = readFileSync(new URL('../dist/index.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(root, /VITE_API_BASE_URL \?\?/, 'config must not be bundled into the root entry')
+})
+
+await test('a placeholder base URL fails loudly instead of silently', () => {
+  assert.throws(
+    () => createAuthClient({ baseURL: 'https://REPLACE-ME.execute-api.ap-south-1.amazonaws.com/v1' }),
+    /still the placeholder/
+  )
+  assert.throws(() => createAuthClient({ baseURL: '' }), /VITE_API_BASE_URL/)
+})
+
+await test('generated files carry a one-line note, not an essay', () => {
+  const screen = readFileSync(join(scaffold.TEMPLATES, 'auth/screens/SignIn.jsx'), 'utf8')
+  const header = screen.split('\n').findIndex((l) => l.startsWith('import'))
+  assert.ok(header <= 1, `${header} lines of preamble before the first import`)
+})
+
+await test('the generated home page shows session state and builds on the theme', () => {
+  const app = readFileSync(join(scaffold.TEMPLATES, 'app/App.jsx'), 'utf8')
+  const css = readFileSync(join(scaffold.TEMPLATES, 'auth/home.css'), 'utf8')
+  for (const bit of ['expiresIn', 'decodeJWT', 'force-refresh', 'ChangePassword', 'DeleteAccount']) {
+    assert.match(app, new RegExp(bit), `home page lost ${bit}`)
+  }
+  assert.match(css, /--ac-accent/, 'home page styling should reuse the library theme variables')
+})
+
+await test('the .env template carries no example URL', () => {
+  const template = readFileSync(join(scaffold.TEMPLATES, 'env'), 'utf8')
+  assert.doesNotMatch(template, /Example:/, 'the example line was removed on purpose')
+  const live = template.split('\n').filter((l) => l.includes('execute-api') && !l.includes('REPLACE-ME'))
+  assert.deepEqual(live, [], `no live URL may ship: ${live.join(' | ')}`)
+})
+
+temps.forEach((dir) => rmSync(dir, { recursive: true, force: true }))
 
 // ── report ──────────────────────────────────────────────────────────────────
 

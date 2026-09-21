@@ -13,7 +13,7 @@ import { MIN_PASSWORD_LENGTH, validateConfirmation, validatePassword } from '../
  * @param {{ onSuccess?: () => void, onCancel?: () => void }} props
  */
 export default function ChangePassword({ onSuccess, onCancel }) {
-  const { changePassword, isLoading, error } = useAuth()
+  const { changePassword, isLoading, error, clearError } = useAuth()
 
   const [form, setForm] = useState({ current: '', password: '', confirm: '' })
   const [fieldErrors, setFieldErrors] = useState({})
@@ -59,7 +59,11 @@ export default function ChangePassword({ onSuccess, onCancel }) {
     }
   }
 
-  const set = (key) => (event) => setForm((f) => ({ ...f, [key]: event.target.value }))
+  const set = (key) => (event) => {
+    if (error) clearError()
+    setFieldErrors((errors) => (errors[key] ? { ...errors, [key]: '' } : errors))
+    setForm((f) => ({ ...f, [key]: event.target.value }))
+  }
 
   if (succeeded) {
     return (
