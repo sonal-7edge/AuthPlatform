@@ -230,7 +230,6 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
     const base = await inquirer.prompt<{
       name: string;
       type: CustomAttribute['type'];
-      required: boolean;
       mutable: boolean;
     }>([
       {
@@ -245,14 +244,6 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
         message: 'Attribute type:',
         choices: CUSTOM_ATTRIBUTE_TYPE_CHOICES,
         default: 'String',
-      },
-      {
-        type: 'input',
-        name: 'required',
-        message: 'Required at sign-up? (y/n)',
-        filter: filterYesNo,
-        validate: validateYesNo,
-        transformer: transformYesNo,
       },
       {
         type: 'input',
@@ -301,7 +292,9 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
       ]);
     }
 
-    attributes.push({ ...base, name: base.name.trim(), ...constraints });
+    // Cognito rejects `Required: true` for any custom attribute (only built-in attributes like
+    // `email` support that), so this is never a legitimate choice — always false.
+    attributes.push({ ...base, name: base.name.trim(), required: false, ...constraints });
 
     const { addAnother } = await inquirer.prompt<{ addAnother: boolean }>([
       {

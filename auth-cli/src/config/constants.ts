@@ -8,8 +8,6 @@ import {
   SignInOption,
 } from '../types';
 
-export const OUTPUT_FILE = 'auth-config.yaml';
-
 export const CFN_OUTPUT_FILE = 'cognito-template.yaml';
 
 // The generated CloudFormation template exposes this as an `Environment` Parameter

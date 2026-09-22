@@ -2,7 +2,7 @@
 
 Internal CLI tool for standardizing AWS Cognito resource provisioning.
 
-`auth generate` runs an interactive wizard that collects authentication requirements, validates them, and writes a deployable CloudFormation template — no manual YAML authoring required. `auth add-client` reopens an existing config/template to add more app clients, `auth validate` checks a hand-edited `auth-config.yaml`, and `auth deploy` ships the generated template to AWS via `sam deploy`. The wizard mirrors the `cognito-panel` web UI step for step, so both tools produce the same shape of config from the same questions.
+`auth generate` runs an interactive wizard that collects authentication requirements, validates them, and writes a deployable CloudFormation template — no manual YAML authoring required. `auth add-client` reopens an existing config/template to add more app clients, and `auth deploy` ships the generated template to AWS via `sam deploy`. The wizard mirrors the `cognito-panel` web UI step for step, so both tools produce the same shape of config from the same questions.
 
 ---
 
@@ -92,29 +92,17 @@ If the input file is an `auth-config.yaml`, it's updated and saved back to disk 
 
 ### `auth deploy <file>`
 
-Verifies your AWS credentials via STS first — using `--profile` if given, otherwise the shell's exported credentials/`AWS_PROFILE` — then deploys a generated `cognito-template.yaml` with `sam deploy`. Requires the AWS SAM CLI installed (auto-installed on Linux if missing).
+Verifies your AWS credentials via STS first — using `--profile` if given, otherwise the shell's exported credentials/`AWS_PROFILE` — then deploys a generated `cognito-template.yaml` with `sam deploy`. Requires the AWS SAM CLI installed (auto-installed on Linux if missing). Always asks for the stack name interactively (defaulting to the template's pool name) — there's no flag to skip that prompt.
 
 ```bash
-auth deploy ./resources/auth/cognito-template.yaml --stack-name my-app-users
-auth deploy ./resources/auth/cognito-template.yaml -s my-app-users -p my-profile -r us-east-1
+auth deploy ./resources/auth/cognito-template.yaml
+auth deploy ./resources/auth/cognito-template.yaml -p my-profile -r us-east-1
 ```
 
 | Option | Description |
 |---|---|
-| `-s, --stack-name <name>` | CloudFormation stack name (required) |
 | `-p, --profile <name>` | AWS CLI profile to use for credentials |
 | `-r, --region <region>` | AWS region to deploy into (defaults to the profile/env region) |
-
-### `auth validate [file]`
-
-Validates an existing `auth-config.yaml`. Defaults to `auth-config.yaml` in the current directory.
-
-```bash
-auth validate
-auth validate ./config/auth-config.yaml
-```
-
-Exits with code `0` on success, `1` on failure.
 
 ### `auth --help`
 
@@ -125,7 +113,6 @@ auth --help
 auth generate --help
 auth add-client --help
 auth deploy --help
-auth validate --help
 ```
 
 ---
@@ -224,7 +211,6 @@ lambdaTriggers:
 ```bash
 # Run in dev mode (no build required)
 npm run dev -- generate
-npm run dev -- validate
 
 # Type-check
 npx tsc --noEmit
@@ -255,8 +241,7 @@ auth-cli/
 │   ├── commands/         # Commander.js command registrations
 │   │   ├── generateCommand.ts
 │   │   ├── addClientCommand.ts
-│   │   ├── deployCommand.ts
-│   │   └── validateCommand.ts
+│   │   └── deployCommand.ts
 │   ├── prompts/          # Inquirer.js prompt definitions
 │   │   └── authPrompts.ts
 │   ├── validators/       # Zod-based validation logic

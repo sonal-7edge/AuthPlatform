@@ -90,7 +90,11 @@ const CustomAttributeSchema = z.object({
       message: 'email and name are already built-in attributes; choose a different name',
     }),
   type: z.enum(['String', 'Number', 'Boolean', 'DateTime']),
-  required: z.boolean(),
+  // Cognito rejects `Required: true` for any custom attribute at deploy time — only built-in
+  // attributes like `email` support that — so this is caught here instead.
+  required: z.literal(false, {
+    errorMap: () => ({ message: 'Custom attributes cannot be required (Cognito limitation)' }),
+  }),
   mutable: z.boolean(),
   minLength: z.number().int().min(0).optional(),
   maxLength: z.number().int().min(1).optional(),
