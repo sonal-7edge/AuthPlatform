@@ -5,12 +5,16 @@ import { spawnSync } from 'child_process';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { logger } from '../utils/logger';
+import { requireAwsIdentity } from '../utils/awsIdentity';
 import { fileExists, resolveOutputPath } from '../utils/fileUtils';
+import { DEPLOY_ENVIRONMENTS, DeployEnvironment } from '../config/constants';
+import { filterYesNo, transformYesNo, validateYesNo } from '../prompts/yesNoQuestion';
 
 export interface DeployOptions {
   stackName: string;
   profile?: string;
   region?: string;
+  environment?: string;
 }
 
 const SAM_INSTALL_DIR = path.join(os.homedir(), '.aws-sam-cli');
@@ -130,10 +134,12 @@ export async function ensureSamCli(): Promise<boolean> {
   logger.warn('AWS SAM CLI was not found on PATH.');
   const { confirmInstall } = await inquirer.prompt<{ confirmInstall: boolean }>([
     {
-      type: 'confirm',
+      type: 'input',
       name: 'confirmInstall',
-      message: `Download and install it now to ${SAM_BIN_DIR} (no sudo required)?`,
-      default: true,
+      message: `Download and install it now to ${SAM_BIN_DIR} (no sudo required)? (y/n)`,
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
   ]);
 
@@ -150,6 +156,16 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
 
   if (!fileExists(filePath)) {
     logger.error(`File not found: ${filePath}`);
+    process.exit(1);
+  }
+
+  if (
+    options.environment &&
+    !DEPLOY_ENVIRONMENTS.includes(options.environment as DeployEnvironment)
+  ) {
+    logger.error(
+      `Invalid --environment "${options.environment}". Must be one of: ${DEPLOY_ENVIRONMENTS.join(', ')}`,
+    );
     process.exit(1);
   }
 
@@ -171,6 +187,9 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
 
   if (options.profile) args.push('--profile', options.profile);
   if (options.region) args.push('--region', options.region);
+  if (options.environment) {
+    args.push('--parameter-overrides', `Environment=${options.environment}`);
+  }
 
   logger.title('Deploying CloudFormation Stack (via AWS SAM)');
   logger.info(`Running: sam ${args.join(' ')}\n`);
@@ -203,15 +222,12 @@ export function registerDeployCommand(program: Command): void {
       '-r, --region <region>',
       'AWS region to deploy into (defaults to the profile/env region)',
     )
+    .option(
+      '-e, --environment <env>',
+      `Deploy stage to set on the template's Environment parameter (${DEPLOY_ENVIRONMENTS.join('/')}; defaults to the template's own default, "${DEPLOY_ENVIRONMENTS[0]}")`,
+    )
     .action(async (file: string, options: DeployOptions) => {
-      if (!hasAwsCredentialsInEnv()) {
-        logger.warn('No AWS credentials detected in this shell. Export them first, e.g.:');
-        logger.list([
-          'export AWS_ACCESS_KEY_ID=...',
-          'export AWS_SECRET_ACCESS_KEY=...',
-          'export AWS_SESSION_TOKEN=...   # only if using temporary/SSO credentials',
-        ]);
-      }
+      await requireAwsIdentity(options.profile);
 
       await runDeploy(file, options);
     });

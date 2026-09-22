@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import { AuthConfigSchema } from '../models/authConfigSchema';
 import { ValidationResult } from '../types';
 import {
+  APP_CLIENT_NAME_REGEX,
   CUSTOM_ATTRIBUTE_NAME_REGEX,
   POOL_NAME_REGEX,
   RESERVED_ATTRIBUTE_NAMES,
@@ -39,12 +40,39 @@ export function validatePoolName(name: string): true | string {
   return true;
 }
 
+export function validateAppClientName(name: string): true | string {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) {
+    return 'Client name is required';
+  }
+  if (!APP_CLIENT_NAME_REGEX.test(trimmed)) {
+    return 'Client name must be 1-128 characters: letters, numbers, hyphens, and underscores only';
+  }
+  return true;
+}
+
+function isInRange(value: number, min: number, max: number): boolean {
+  return !Number.isNaN(value) && value >= min && value <= max;
+}
+
 export function validateRange(min: number, max: number, label: string) {
-  return (value: number): true | string => {
-    if (Number.isNaN(value) || value < min || value > max) {
-      return `${label} must be between ${min} and ${max}`;
-    }
-    return true;
+  return (value: number | string): true | string => {
+    const numericValue = typeof value === 'number' ? value : Number(value);
+    return isInRange(numericValue, min, max) ? true : `${label} must be between ${min} and ${max}`;
+  };
+}
+
+// Pairs with `validateRange` on `type: 'input'` number prompts (see authPrompts.ts). inquirer's
+// `type: 'number'` prompt converts input to a JS `Number` before validation even runs, and on a
+// validation failure its error-render path does `rl.cursor += value.length` — `.length` on a
+// `Number` is `undefined`, so `rl.cursor` becomes `NaN` and the terminal cursor jumps to column 0
+// instead of the end of the input, breaking backspace. Only converting to a number once the value
+// is already known to be in range means an invalid entry stays a string, so `.length` stays valid
+// and the cursor bug never triggers.
+export function filterNumberInRange(min: number, max: number) {
+  return (input: string): string | number => {
+    const value = Number(String(input).trim());
+    return isInRange(value, min, max) ? value : input;
   };
 }
 

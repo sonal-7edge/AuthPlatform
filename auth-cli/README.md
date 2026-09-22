@@ -33,6 +33,14 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_SESSION_TOKEN=...   # only if using temporary/SSO credentials
 ```
 
+Both `auth generate` and `auth deploy` verify these credentials via AWS STS as their very first step — before the wizard runs, or before `sam deploy` is invoked — and print which account they resolved:
+
+```
+ℹ AWS Account: 123456789012 (arn:aws:iam::123456789012:user/akhilesh)
+```
+
+If no valid credentials are found, the command exits immediately with an error instead of proceeding.
+
 ---
 
 ## Usage
@@ -52,7 +60,7 @@ This runs the wizard and generates a `cognito-template.yaml` CloudFormation temp
 
 ### `auth generate`
 
-Runs the interactive wizard and generates a CloudFormation template for the Cognito User Pool, its app clients, and any Lambda triggers — no `auth-config.yaml` is written.
+Verifies your AWS credentials via STS first (see [Prerequisites for deploying](#prerequisites-for-deploying)), then runs the interactive wizard and generates a CloudFormation template for the Cognito User Pool, its app clients, and any Lambda triggers — no `auth-config.yaml` is written.
 
 ```bash
 auth generate
@@ -84,7 +92,7 @@ If the input file is an `auth-config.yaml`, it's updated and saved back to disk 
 
 ### `auth deploy <file>`
 
-Deploys a generated `cognito-template.yaml` with `sam deploy`. Requires AWS credentials exported in the shell (or `--profile`/`AWS_PROFILE`) and the AWS SAM CLI installed (auto-installed on Linux if missing).
+Verifies your AWS credentials via STS first — using `--profile` if given, otherwise the shell's exported credentials/`AWS_PROFILE` — then deploys a generated `cognito-template.yaml` with `sam deploy`. Requires the AWS SAM CLI installed (auto-installed on Linux if missing).
 
 ```bash
 auth deploy ./resources/auth/cognito-template.yaml --stack-name my-app-users
@@ -204,7 +212,7 @@ lambdaTriggers:
 - **Region** — must be one of the 17 supported AWS regions
 - **User Pool Name** — required; letters, numbers, hyphens, and underscores only
 - **Sign-in options** — at least one of `email`, `phone`, `username`
-- **Password policy** — minimum length 6-20, temporary password validity 1-365 days
+- **Password policy** — minimum length 6-20, temporary password validity 1-365 days. Any field left out of a hand-written `auth-config.yaml` (`minLength`, `requireUppercase`, `requireLowercase`, `requireNumbers`, `requireSymbols`, `tempPasswordDays`) defaults to the same values as the wizard: `8`, `true`, `true`, `true`, `false`, `7`
 - **MFA** — at least one method required when MFA is enabled
 - **App clients** — at least one client; each must include `ALLOW_REFRESH_TOKEN_AUTH`; token validity within AWS limits; callback/logout URLs must be valid URLs
 - **Lambda triggers** — each ARN, if set, must match `arn:aws:lambda:REGION:ACCOUNT:function:NAME`
@@ -255,9 +263,10 @@ auth-cli/
 │   │   └── configValidator.ts
 │   ├── models/           # Zod schemas
 │   │   └── authConfigSchema.ts
-│   ├── utils/            # File I/O, logger, CloudFormation generator
+│   ├── utils/            # File I/O, logger, CloudFormation generator, AWS identity check
 │   │   ├── fileUtils.ts
 │   │   ├── logger.ts
+│   │   ├── awsIdentity.ts
 │   │   └── cfnGenerator.ts
 │   ├── services/         # Business logic
 │   │   ├── IConfigService.ts

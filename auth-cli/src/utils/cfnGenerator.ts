@@ -1,4 +1,5 @@
 import { AppClient, AuthConfig, CustomAttribute, LambdaTriggers } from '../types';
+import { DEPLOY_ENVIRONMENTS } from '../config/constants';
 
 const LAMBDA_TRIGGER_CFN_KEYS: Record<keyof LambdaTriggers, string> = {
   preSignUp: 'PreSignUp',
@@ -92,14 +93,30 @@ export function generateCfnTemplate(config: AuthConfig): string {
                 Resource: '*'`
       : '';
 
+  // A single app client is the common case, and also what the companion backend-code stack's
+  // parameters (CognitoUserPoolClientId, CognitoClientSecret) expect by name — so it gets the
+  // plain names below. Additional clients fall back to per-client names to avoid collisions.
+  const singleAppClient = appClients.length === 1;
+
   const outputs = appClients
     .map((client, i) => {
       const logicalId = `AppClient${sanitize(client.name || `Client${i + 1}`)}`;
+      const idOutputName = singleAppClient ? 'CognitoUserPoolClientId' : `${logicalId}Id`;
+      const secretOutputName = singleAppClient ? 'CognitoClientSecret' : `${logicalId}Secret`;
+
+      const secretOutput = client.generateSecret
+        ? `
+  ${secretOutputName}:
+    Value: !GetAtt ${logicalId}.ClientSecret
+    Export:
+      Name: !Sub '\${AWS::StackName}-${secretOutputName}'`
+        : '';
+
       return `
-  ${logicalId}Id:
+  ${idOutputName}:
     Value: !Ref ${logicalId}
     Export:
-      Name: !Sub '\${AWS::StackName}-${logicalId}Id'`;
+      Name: !Sub '\${AWS::StackName}-${idOutputName}'${secretOutput}`;
     })
     .join('');
 
@@ -117,8 +134,8 @@ Metadata:
 Parameters:
   Environment:
     Type: String
-    Default: dev
-    AllowedValues: [dev, staging, prod]
+    Default: ${DEPLOY_ENVIRONMENTS[0]}
+    AllowedValues: [${DEPLOY_ENVIRONMENTS.join(', ')}]
 
 Resources:
   UserPool:
@@ -186,14 +203,16 @@ ${appClientResources}
 ${smsRole}
 
 Outputs:
-  UserPoolId:
+  ProjectName:
+    Value: !Ref 'AWS::StackName'
+  CognitoUserPoolId:
     Value: !Ref UserPool
     Export:
-      Name: !Sub '\${AWS::StackName}-UserPoolId'
-  UserPoolArn:
+      Name: !Sub '\${AWS::StackName}-CognitoUserPoolId'
+  CognitoUserPoolArn:
     Value: !GetAtt UserPool.Arn
     Export:
-      Name: !Sub '\${AWS::StackName}-UserPoolArn'${outputs}
+      Name: !Sub '\${AWS::StackName}-CognitoUserPoolArn'${outputs}
 `;
 }
 
