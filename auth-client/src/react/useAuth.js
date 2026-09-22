@@ -25,6 +25,7 @@ export function useAuth() {
     // Note the refresh token is NOT on state — `refreshToken` below is the
     // method that renews the session. Read the value with getRefreshToken().
     ...state,
+    clearError: client.clearError,
     // session
     signUp: client.signUp,
     signIn: client.signIn,
@@ -39,7 +40,6 @@ export function useAuth() {
     signOut: client.signOut,
     logout: client.logout,
     // tokens
-    fetchTokens: client.fetchTokens,
     refreshToken: client.refreshToken,
     getTokens: client.getTokens,
     getIdToken: client.getIdToken,

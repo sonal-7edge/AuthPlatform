@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# Static deploy settings only.
+#
+# samconfig.toml cannot read environment variables, so nothing that varies by
+# project or environment lives here. The stack name, region and every template
+# parameter are derived from .env by scripts/deploy.sh and passed to sam on the
+# command line, which overrides this file.
+#
+# That is why there is no stack_name, no region and no parameter_overrides
+# below: change .env, not this file.
+#
+# NEVER put CognitoClientSecret or ResetTokenSecret here — this file is safe to
+# commit, and both are secrets. They belong in .env, which is gitignored.
+# ---------------------------------------------------------------------------
+version = 0.1
+
+[default.deploy.parameters]
+# The execution role has an explicit RoleName, so NAMED is required.
+capabilities = "CAPABILITY_NAMED_IAM"
+
+# Let sam manage its own artifact bucket rather than requiring one up front.
+resolve_s3 = true
+
+# Prints the resource diff and waits for y/N. Set false for unattended CI.
+confirm_changeset = true
+
+# false so a failed create rolls itself back instead of stranding the stack
+# in CREATE_FAILED for someone to delete by hand.
+disable_rollback = false
+
+image_repositories = []

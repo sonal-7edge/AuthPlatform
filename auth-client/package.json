@@ -1,7 +1,7 @@
 {
   "name": "@7edge/auth-client",
-  "version": "0.2.0",
-  "description": "Plug-and-play frontend authentication library \u2014 headless core methods, React hooks, and prebuilt UI screens, all from one entry point.",
+  "version": "0.2.1",
+  "description": "Plug-and-play frontend authentication library — headless core methods, React hooks, and prebuilt UI screens, all from one entry point.",
   "keywords": [
     "authentication",
     "auth",
@@ -34,7 +34,8 @@
     },
     "./style.css": "./dist/style.css",
     "./ui/style.css": "./dist/style.css",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./config": "./dist/config.js"
   },
   "files": [
     "dist",
@@ -50,7 +51,7 @@
   "scripts": {
     "build:js": "vite build",
     "build:css": "tailwindcss -i ./src/ui/styles.css -o ./dist/style.css --minify",
-    "build": "npm run build:js && npm run build:css && npm run build:templates && npm run build:bin",
+    "build": "npm run build:js && npm run build:css && npm run build:config && npm run build:templates && npm run build:bin",
     "prepare": "npm run build",
     "lint": "eslint .",
     "verify": "node scripts/verify-package.mjs",
@@ -58,7 +59,8 @@
     "postinstall": "node bin/postinstall.mjs",
     "build:bin": "node -e \"require('fs').cpSync('bin','dist/bin',{recursive:true})\"",
     "build:dist-repo": "node scripts/build-dist-repo.mjs",
-    "set-repo": "node scripts/set-repo.mjs"
+    "set-repo": "node scripts/set-repo.mjs",
+    "build:config": "node -e \"require('fs').copyFileSync('src/config.js','dist/config.js')\""
   },
   "peerDependencies": {
     "react": ">=18",
