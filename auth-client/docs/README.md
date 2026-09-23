@@ -2,6 +2,7 @@
 
 | Document | Read it when |
 |---|---|
+| [../../docs/GETTING-STARTED.md](../../docs/GETTING-STARTED.md) | You are standing the whole platform up from scratch — provisioning Cognito with `auth-cli`, deploying the backend, then wiring this package to it. **Start here if you have no auth API yet.** |
 | [INTEGRATION.md](./INTEGRATION.md) | You are adding `@7edge/auth-client` to an application — install, wiring, the three integration paths, theming, the full API and backend contract, troubleshooting. |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | You are maintaining or extending the library — how the layers fit, the eight pieces of key logic and why they are the way they are, the build and scaffolding pipelines, and how to make changes safely. |
 | [../STRUCTURE.md](../STRUCTURE.md) | You want a one-page map of what each folder is for. |

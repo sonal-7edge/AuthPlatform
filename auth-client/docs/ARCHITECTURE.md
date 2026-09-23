@@ -288,7 +288,7 @@ ORDO host app so both sit on one bus:
 |---|---|---|
 | `token_refreshed` | after every successful refresh | adopt the broadcast bundle, re-read state |
 | `logout` | sign-out, account deletion, unrecoverable refresh failure | clear the session, fire `onForceLogout` |
-| `login` | OTP verification succeeded | re-read state from storage |
+| `login` | sign-in succeeded | re-read state from storage |
 | `need_refresh` | a sibling hit a 401 and wants the lock holder to renew | refresh, unless already refreshing |
 
 `token_refreshed` carries the bundle as its payload, so a sibling adopts it
@@ -473,25 +473,34 @@ of doing security here.
 How a consumer ends up with editable screens:
 
 ```
-src/ui/screens/*.jsx
+src/ui/{screens,components}/*  +  validation.js, constants.js, AuthFlow.jsx
         │  scripts/build-templates.mjs  (rewrites imports, adds a banner)
         ▼
-dist/templates/screens/*.jsx  +  templates/{config.js,index.js,env} copied verbatim
-        │  bin/scaffold.mjs  (invoked by postinstall, or `auth-client init`)
+dist/templates/auth/**   +  templates/{auth/,app/,env} copied verbatim
+        │  bin/scaffold.mjs  (postinstall, or `auth-client init` / `setup`)
         ▼
-consumer's src/auth/
+consumer's src/auth/   (+ .env, main.jsx, App.jsx — only via `setup`)
 ```
 
-**The screens are generated, not hand-maintained.** That is the point: an
-ejected copy can never silently drift from the library it talks to. The only
-transformation is rewriting internal relative imports to the package's public
-entry — `import AuthCard from '../components/AuthCard'` becomes a named import
-from `@7edge/auth-client`, since default exports inside the library are named
-exports on the barrel. `AuthFlow` is special-cased to keep its `./screens/*`
-imports relative, so the ejected flow drives the ejected screens.
+**The ejected folder is self-contained and generated, not hand-maintained.**
+That is the point: an ejected copy can never silently drift from the library it
+talks to. The consumer gets the screens *and* the primitives they are built
+from, so the only thing a generated file imports from the package is the auth
+engine itself.
+
+Two transformations matter. `src/ui/` nests primitives as
+`components/<Name>/index.jsx`; the ejected copy flattens them to
+`components/<Name>.jsx`, so sibling import depths shift. And `AuthFlow` keeps
+its `./screens/*` imports relative, so the ejected flow drives the ejected
+screens rather than the library's.
+
+The hand-written templates are `templates/auth/` (the barrel and `home.css`),
+`templates/app/` (the `main.jsx` and `App.jsx` that `wire` installs) and
+`templates/env`.
 
 If you add a screen to `src/ui/screens/`, add its name to the `SCREENS` array
-in `build-templates.mjs` and export it from `templates/index.js`. Nothing else.
+in `build-templates.mjs` and export it from `templates/auth/index.js`. A new
+primitive goes in the corresponding `COMPONENTS` list.
 
 **`bin/scaffold.mjs`** holds two rules absolutely:
 
