@@ -5,12 +5,47 @@ import { spawnSync } from 'child_process';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
 import { logger } from '../utils/logger';
-import { fileExists, resolveOutputPath } from '../utils/fileUtils';
+import { requireAwsIdentity } from '../utils/awsIdentity';
+import { fileExists, readYaml, resolveOutputPath } from '../utils/fileUtils';
+import { cfnTemplateToAuthConfig, isCfnTemplate } from '../utils/cfnParser';
+import { DEPLOY_ENVIRONMENTS, DeployEnvironment } from '../config/constants';
+import { filterYesNo, transformYesNo, validateYesNo } from '../prompts/yesNoQuestion';
 
 export interface DeployOptions {
-  stackName: string;
+  stackName?: string;
   profile?: string;
   region?: string;
+  environment?: string;
+}
+
+// Falls back to the template's own pool name (e.g. `qwert` from `UserPoolName: !Sub
+// 'qwert-${Environment}'`) so re-deploying a template you already generated doesn't force you to
+// retype the name it was created with — you can still override it with --stack-name.
+async function promptStackName(filePath: string): Promise<string> {
+  let defaultName = path.basename(filePath, path.extname(filePath));
+
+  try {
+    const doc = readYaml(filePath);
+    if (isCfnTemplate(doc)) {
+      const { poolName } = cfnTemplateToAuthConfig(doc);
+      if (poolName) defaultName = poolName;
+    }
+  } catch {
+    // Keep the filename-derived default if the template can't be parsed.
+  }
+
+  const { stackName } = await inquirer.prompt<{ stackName: string }>([
+    {
+      type: 'input',
+      name: 'stackName',
+      message: 'Stack name:',
+      default: defaultName,
+      validate: (value: string): true | string =>
+        value.trim().length > 0 ? true : 'Stack name is required',
+    },
+  ]);
+
+  return stackName.trim();
 }
 
 const SAM_INSTALL_DIR = path.join(os.homedir(), '.aws-sam-cli');
@@ -130,10 +165,12 @@ export async function ensureSamCli(): Promise<boolean> {
   logger.warn('AWS SAM CLI was not found on PATH.');
   const { confirmInstall } = await inquirer.prompt<{ confirmInstall: boolean }>([
     {
-      type: 'confirm',
+      type: 'input',
       name: 'confirmInstall',
-      message: `Download and install it now to ${SAM_BIN_DIR} (no sudo required)?`,
-      default: true,
+      message: `Download and install it now to ${SAM_BIN_DIR} (no sudo required)? (y/n)`,
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
   ]);
 
@@ -153,6 +190,18 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
     process.exit(1);
   }
 
+  if (
+    options.environment &&
+    !DEPLOY_ENVIRONMENTS.includes(options.environment as DeployEnvironment)
+  ) {
+    logger.error(
+      `Invalid --environment "${options.environment}". Must be one of: ${DEPLOY_ENVIRONMENTS.join(', ')}`,
+    );
+    process.exit(1);
+  }
+
+  const stackName = options.stackName ?? (await promptStackName(filePath));
+
   if (!(await ensureSamCli())) {
     process.exit(1);
   }
@@ -162,7 +211,7 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
     '--template-file',
     filePath,
     '--stack-name',
-    options.stackName,
+    stackName,
     '--capabilities',
     'CAPABILITY_IAM',
     '--resolve-s3',
@@ -171,6 +220,9 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
 
   if (options.profile) args.push('--profile', options.profile);
   if (options.region) args.push('--region', options.region);
+  if (options.environment) {
+    args.push('--parameter-overrides', `Environment=${options.environment}`);
+  }
 
   logger.title('Deploying CloudFormation Stack (via AWS SAM)');
   logger.info(`Running: sam ${args.join(' ')}\n`);
@@ -188,7 +240,7 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
   }
 
   logger.divider();
-  logger.success(`Stack "${options.stackName}" deployed successfully.`);
+  logger.success(`Stack "${stackName}" deployed successfully.`);
   logger.divider();
 }
 
@@ -197,21 +249,17 @@ export function registerDeployCommand(program: Command): void {
     .command('deploy')
     .description('Deploy a generated CloudFormation template with `sam deploy`')
     .argument('<file>', 'Path to a generated cognito-template.yaml')
-    .requiredOption('-s, --stack-name <name>', 'CloudFormation stack name')
     .option('-p, --profile <name>', 'AWS CLI profile to use for credentials')
     .option(
       '-r, --region <region>',
       'AWS region to deploy into (defaults to the profile/env region)',
     )
+    .option(
+      '-e, --environment <env>',
+      `Deploy stage to set on the template's Environment parameter (${DEPLOY_ENVIRONMENTS.join('/')}; defaults to the template's own default, "${DEPLOY_ENVIRONMENTS[0]}")`,
+    )
     .action(async (file: string, options: DeployOptions) => {
-      if (!hasAwsCredentialsInEnv()) {
-        logger.warn('No AWS credentials detected in this shell. Export them first, e.g.:');
-        logger.list([
-          'export AWS_ACCESS_KEY_ID=...',
-          'export AWS_SECRET_ACCESS_KEY=...',
-          'export AWS_SESSION_TOKEN=...   # only if using temporary/SSO credentials',
-        ]);
-      }
+      await requireAwsIdentity(options.profile);
 
       await runDeploy(file, options);
     });

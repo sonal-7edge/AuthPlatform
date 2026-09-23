@@ -9,22 +9,20 @@ import {
   PROVIDER_CHOICES,
   REFRESH_TOKEN_AUTH_FLOW,
   SIGNIN_OPTION_CHOICES,
+  TOKEN_VALIDITY_LIMITS,
 } from '../config/constants';
 import {
+  filterNumberInRange,
+  validateAppClientName,
   validateAtLeastOne,
   validateCustomAttributeName,
   validatePoolName,
   validateRange,
   validateUrl,
 } from '../validators/configValidator';
-import {
-  AppClient,
-  AuthConfig,
-  CustomAttribute,
-  LambdaTriggers,
-  MfaMethod,
-} from '../types';
+import { AppClient, AuthConfig, CustomAttribute, LambdaTriggers, MfaMethod } from '../types';
 import { logger } from '../utils/logger';
+import { filterYesNo, transformYesNo, validateYesNo } from './yesNoQuestion';
 
 export async function runAuthPrompts(): Promise<AuthConfig> {
   // Step 1 — Cloud Provider
@@ -62,25 +60,31 @@ export async function runAuthPrompts(): Promise<AuthConfig> {
       validate: validatePoolName,
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'selfSignup',
       message:
-        'Allow self-registration? (users can sign themselves up; disable to require an admin to create accounts)',
-      default: true,
+        'Allow self-registration? (users can sign themselves up; disable to require an admin to create accounts) (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'emailVerification',
       message:
-        'Auto-verify email addresses? (users must click a confirmation link/code before they can sign in)',
-      default: true,
+        'Auto-verify email addresses? (users must click a confirmation link/code before they can sign in) (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'deletionProtection',
       message:
-        'Enable deletion protection? (recommended for prod, disable for easy teardown in dev)',
-      default: true,
+        'Enable deletion protection? (recommended for prod, disable for easy teardown in dev) (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
   ]);
 
@@ -100,41 +104,51 @@ export async function runAuthPrompts(): Promise<AuthConfig> {
   // Step 4 — Password Policy
   const passwordPolicy = await inquirer.prompt<AuthConfig['passwordPolicy']>([
     {
-      type: 'number',
+      type: 'input',
       name: 'minLength',
       message: 'Minimum password length (6-20):',
-      default: 8,
+      default: '8',
+      filter: filterNumberInRange(6, 20),
       validate: validateRange(6, 20, 'Minimum length'),
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'requireUppercase',
-      message: 'Require uppercase letters (A-Z)?',
-      default: true,
+      message: 'Require uppercase letters (A-Z)? (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'requireLowercase',
-      message: 'Require lowercase letters (a-z)?',
-      default: true,
+      message: 'Require lowercase letters (a-z)? (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'requireNumbers',
-      message: 'Require numbers (0-9)?',
-      default: true,
+      message: 'Require numbers (0-9)? (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
     {
-      type: 'confirm',
+      type: 'input',
       name: 'requireSymbols',
-      message: 'Require special characters (!@#$...)?',
-      default: false,
+      message: 'Require special characters (!@#$...)? (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
     {
-      type: 'number',
+      type: 'input',
       name: 'tempPasswordDays',
       message: 'Temporary password validity (days, 1-365):',
-      default: 7,
+      default: '7',
+      filter: filterNumberInRange(1, 365),
       validate: validateRange(1, 365, 'Temporary password validity'),
     },
   ]);
@@ -152,17 +166,16 @@ export async function runAuthPrompts(): Promise<AuthConfig> {
 
   let methods: MfaMethod[] = [];
   if (mode !== 'off') {
-    const methodsAnswer = await inquirer.prompt<{ methods: MfaMethod[] }>([
+    const { method } = await inquirer.prompt<{ method: MfaMethod }>([
       {
-        type: 'checkbox',
-        name: 'methods',
-        message: 'Allowed MFA Methods:',
+        type: 'list',
+        name: 'method',
+        message: 'MFA Method:',
         choices: MFA_METHOD_CHOICES,
-        default: ['totp'],
-        validate: validateAtLeastOne('Select at least one MFA method'),
+        default: 'totp',
       },
     ]);
-    methods = methodsAnswer.methods;
+    methods = [method];
   }
 
   // Step 6 — Custom User Attributes (optional, repeatable)
@@ -197,10 +210,12 @@ export async function runAuthPrompts(): Promise<AuthConfig> {
 async function collectCustomAttributes(): Promise<CustomAttribute[]> {
   const { addAttribute } = await inquirer.prompt<{ addAttribute: boolean }>([
     {
-      type: 'confirm',
+      type: 'input',
       name: 'addAttribute',
-      message: 'Add custom user attributes? (e.g. role, department)',
-      default: false,
+      message: 'Add custom user attributes? (e.g. role, department) (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
   ]);
 
@@ -216,7 +231,6 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
     const base = await inquirer.prompt<{
       name: string;
       type: CustomAttribute['type'];
-      required: boolean;
       mutable: boolean;
     }>([
       {
@@ -233,16 +247,12 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
         default: 'String',
       },
       {
-        type: 'confirm',
-        name: 'required',
-        message: 'Required at sign-up?',
-        default: false,
-      },
-      {
-        type: 'confirm',
+        type: 'input',
         name: 'mutable',
-        message: 'Mutable (can be changed after sign-up)?',
-        default: true,
+        message: 'Mutable (can be changed after sign-up)? (y/n)',
+        filter: filterYesNo,
+        validate: validateYesNo,
+        transformer: transformYesNo,
       },
     ]);
 
@@ -250,17 +260,19 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
     if (base.type === 'String') {
       constraints = await inquirer.prompt<{ minLength: number; maxLength: number }>([
         {
-          type: 'number',
+          type: 'input',
           name: 'minLength',
           message: 'Minimum length:',
-          default: 0,
+          default: '0',
+          filter: filterNumberInRange(0, 2048),
           validate: validateRange(0, 2048, 'Minimum length'),
         },
         {
-          type: 'number',
+          type: 'input',
           name: 'maxLength',
           message: 'Maximum length:',
-          default: 256,
+          default: '256',
+          filter: filterNumberInRange(1, 2048),
           validate: validateRange(1, 2048, 'Maximum length'),
         },
       ]);
@@ -281,14 +293,18 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
       ]);
     }
 
-    attributes.push({ ...base, name: base.name.trim(), ...constraints });
+    // Cognito rejects `Required: true` for any custom attribute (only built-in attributes like
+    // `email` support that), so this is never a legitimate choice — always false.
+    attributes.push({ ...base, name: base.name.trim(), required: false, ...constraints });
 
     const { addAnother } = await inquirer.prompt<{ addAnother: boolean }>([
       {
-        type: 'confirm',
+        type: 'input',
         name: 'addAnother',
-        message: 'Add another custom attribute?',
-        default: false,
+        message: 'Add another custom attribute? (y/n)',
+        filter: filterYesNo,
+        validate: validateYesNo,
+        transformer: transformYesNo,
       },
     ]);
 
@@ -303,12 +319,13 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
 export async function collectAppClients(existing: AppClient[] = []): Promise<AppClient[]> {
   const clients: AppClient[] = [...existing];
 
+  const { accessToken, idToken, refreshToken } = TOKEN_VALIDITY_LIMITS;
+
   for (let index = clients.length; ; index++) {
     logger.info(`\nApp Client ${index + 1}`);
 
     const base = await inquirer.prompt<{
       name: string;
-      generateSecret: boolean;
       authFlows: AppClient['authFlows'];
       accessTokenValidity: number;
       idTokenValidity: number;
@@ -319,14 +336,7 @@ export async function collectAppClients(existing: AppClient[] = []): Promise<App
         name: 'name',
         message: 'Client name:',
         default: index === 0 ? 'web-client' : `client-${index + 1}`,
-        validate: (value: string) => (value.trim().length > 0 ? true : 'Client name is required'),
-      },
-      {
-        type: 'confirm',
-        name: 'generateSecret',
-        message:
-          'Generate client secret? (only for server-side apps that can keep it secret; leave off for SPAs/mobile)',
-        default: false,
+        validate: validateAppClientName,
       },
       {
         type: 'checkbox',
@@ -336,25 +346,28 @@ export async function collectAppClients(existing: AppClient[] = []): Promise<App
         default: ['ALLOW_USER_SRP_AUTH'],
       },
       {
-        type: 'number',
+        type: 'input',
         name: 'accessTokenValidity',
-        message: 'Access token validity (minutes, max 1440):',
-        default: 60,
-        validate: validateRange(1, 1440, 'Access token validity'),
+        message: `Access token validity (minutes, ${accessToken.min}-${accessToken.max}):`,
+        default: '60',
+        filter: filterNumberInRange(accessToken.min, accessToken.max),
+        validate: validateRange(accessToken.min, accessToken.max, 'Access token validity'),
       },
       {
-        type: 'number',
+        type: 'input',
         name: 'idTokenValidity',
-        message: 'ID token validity (minutes, max 1440):',
-        default: 60,
-        validate: validateRange(1, 1440, 'ID token validity'),
+        message: `ID token validity (minutes, ${idToken.min}-${idToken.max}):`,
+        default: '60',
+        filter: filterNumberInRange(idToken.min, idToken.max),
+        validate: validateRange(idToken.min, idToken.max, 'ID token validity'),
       },
       {
-        type: 'number',
+        type: 'input',
         name: 'refreshTokenValidity',
-        message: 'Refresh token validity (days, max 3650):',
-        default: 30,
-        validate: validateRange(1, 3650, 'Refresh token validity'),
+        message: `Refresh token validity (days, ${refreshToken.min}-${refreshToken.max}):`,
+        default: '30',
+        filter: filterNumberInRange(refreshToken.min, refreshToken.max),
+        validate: validateRange(refreshToken.min, refreshToken.max, 'Refresh token validity'),
       },
     ]);
 
@@ -367,7 +380,7 @@ export async function collectAppClients(existing: AppClient[] = []): Promise<App
 
     clients.push({
       name: base.name,
-      generateSecret: base.generateSecret,
+      generateSecret: true,
       authFlows,
       accessTokenValidity: base.accessTokenValidity,
       idTokenValidity: base.idTokenValidity,
@@ -378,10 +391,12 @@ export async function collectAppClients(existing: AppClient[] = []): Promise<App
 
     const { addAnother } = await inquirer.prompt<{ addAnother: boolean }>([
       {
-        type: 'confirm',
+        type: 'input',
         name: 'addAnother',
-        message: 'Add another app client?',
-        default: false,
+        message: 'Add another app client? (y/n)',
+        filter: filterYesNo,
+        validate: validateYesNo,
+        transformer: transformYesNo,
       },
     ]);
 
@@ -393,16 +408,27 @@ export async function collectAppClients(existing: AppClient[] = []): Promise<App
   return clients;
 }
 
+const MAX_URLS_PER_LIST = 5;
+
 async function collectUrlList(label: string): Promise<string[]> {
   const urls: string[] = [];
 
-  for (;;) {
+  while (urls.length < MAX_URLS_PER_LIST) {
     const { url } = await inquirer.prompt<{ url: string }>([
       {
         type: 'input',
         name: 'url',
-        message: `${label} (leave blank to finish):`,
-        validate: validateUrl,
+        message: `${label} ${urls.length + 1}/${MAX_URLS_PER_LIST} (press Enter with nothing typed to stop adding more):`,
+        validate: (value: string): true | string => {
+          const result = validateUrl(value);
+          if (result !== true) {
+            return result;
+          }
+          if (value.trim().length > 0 && urls.includes(value.trim())) {
+            return `${value.trim()} was already added`;
+          }
+          return true;
+        },
       },
     ]);
 

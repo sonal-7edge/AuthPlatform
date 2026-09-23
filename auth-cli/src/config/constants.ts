@@ -8,9 +8,17 @@ import {
   SignInOption,
 } from '../types';
 
-export const OUTPUT_FILE = 'auth-config.yaml';
-
 export const CFN_OUTPUT_FILE = 'cognito-template.yaml';
+
+// The generated CloudFormation template exposes this as an `Environment` Parameter
+// (see cfnGenerator.ts) so the same template can be deployed to multiple stages —
+// `auth deploy` overrides it via `--parameter-overrides Environment=<value>`.
+export const DEPLOY_ENVIRONMENTS = ['dev', 'qa', 'pre-prod', 'prod'] as const;
+
+export type DeployEnvironment = (typeof DEPLOY_ENVIRONMENTS)[number];
+
+export const DEPLOY_ENVIRONMENT_CHOICES: Array<{ name: string; value: DeployEnvironment }> =
+  DEPLOY_ENVIRONMENTS.map((value) => ({ name: value, value }));
 
 export const PROVIDER_CHOICES: Array<{ name: string; value: Provider; disabled?: string }> = [
   { name: 'Amazon Web Services (Cognito)', value: 'aws' },
@@ -73,6 +81,15 @@ export const AUTH_FLOW_CHOICES: Array<{ name: string; value: AuthFlow }> = [
 
 export const REFRESH_TOKEN_AUTH_FLOW: AuthFlow = 'ALLOW_REFRESH_TOKEN_AUTH';
 
+// Cognito app client token validity limits, in the units the generated template uses
+// (TokenValidityUnits: AccessToken/IdToken = minutes, RefreshToken = days).
+// Access/ID tokens: 5 minutes – 1 day. Refresh token: 60 minutes – 10 years (1 – 3650 days).
+export const TOKEN_VALIDITY_LIMITS = {
+  accessToken: { min: 5, max: 1440 },
+  idToken: { min: 5, max: 1440 },
+  refreshToken: { min: 1, max: 3650 },
+} as const;
+
 export const LAMBDA_TRIGGER_FIELDS: Array<{
   key: keyof import('../types').LambdaTriggers;
   label: string;
@@ -90,6 +107,11 @@ export const LAMBDA_TRIGGER_FIELDS: Array<{
 ];
 
 export const POOL_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+// Cognito's own ClientName constraint is much looser (letters, numbers, spaces, + = , . @ -),
+// which would still accept symbol-only garbage like "@@@@". Restricted here to the same
+// character set as the pool name, so it actually rejects that.
+export const APP_CLIENT_NAME_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
 
 export const LAMBDA_ARN_REGEX = /^arn:aws:lambda:[a-z0-9-]+:\d{12}:function:[a-zA-Z0-9-_]+$/;
 
