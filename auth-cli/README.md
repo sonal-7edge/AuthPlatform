@@ -137,8 +137,8 @@ The wizard asks questions in eight steps, matching the `cognito-panel` UI:
 | 6. App Clients (repeatable) | Client name | Text | default `web-client`, then `client-N` |
 | | Generate client secret? | Confirm | default no |
 | | Auth flows | Multi-select | SRP / User+Password / Custom Auth / Admin Password Auth (Refresh Token is always included) |
-| | Access / ID token validity | Number (minutes, max 1440) | default 60 each |
-| | Refresh token validity | Number (days, max 3650) | default 30 |
+| | Access / ID token validity | Number (minutes, 5–1440) | default 60 each |
+| | Refresh token validity | Number (days, 1–3650) | default 30 |
 | | Callback URLs / Logout URLs | Repeated text | add as many as needed, blank to finish |
 | | Add another client? | Confirm | loops back to the top of step 6 |
 | 7. Lambda Triggers | 10 trigger ARNs | Text (all optional) | Pre Sign-up, Post Confirmation, Pre Authentication, Post Authentication, Custom Message, Pre Token Generation, User Migration, Define/Create/Verify Auth Challenge |
