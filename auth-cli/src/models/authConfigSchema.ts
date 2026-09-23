@@ -13,16 +13,18 @@ const PasswordPolicySchema = z.object({
     .number()
     .int()
     .min(6, 'Minimum length must be at least 6')
-    .max(20, 'Minimum length must be at most 20'),
-  requireUppercase: z.boolean(),
-  requireLowercase: z.boolean(),
-  requireNumbers: z.boolean(),
-  requireSymbols: z.boolean(),
+    .max(20, 'Minimum length must be at most 20')
+    .default(8),
+  requireUppercase: z.boolean().default(true),
+  requireLowercase: z.boolean().default(true),
+  requireNumbers: z.boolean().default(true),
+  requireSymbols: z.boolean().default(false),
   tempPasswordDays: z
     .number()
     .int()
     .min(1, 'Temporary password validity must be at least 1 day')
-    .max(365, 'Temporary password validity must be at most 365 days'),
+    .max(365, 'Temporary password validity must be at most 365 days')
+    .default(7),
 });
 
 const MfaSchema = z
@@ -88,7 +90,11 @@ const CustomAttributeSchema = z.object({
       message: 'email and name are already built-in attributes; choose a different name',
     }),
   type: z.enum(['String', 'Number', 'Boolean', 'DateTime']),
-  required: z.boolean(),
+  // Cognito rejects `Required: true` for any custom attribute at deploy time — only built-in
+  // attributes like `email` support that — so this is caught here instead.
+  required: z.literal(false, {
+    errorMap: () => ({ message: 'Custom attributes cannot be required (Cognito limitation)' }),
+  }),
   mutable: z.boolean(),
   minLength: z.number().int().min(0).optional(),
   maxLength: z.number().int().min(1).optional(),

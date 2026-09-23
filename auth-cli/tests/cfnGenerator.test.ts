@@ -71,7 +71,7 @@ describe('generateCfnTemplate()', () => {
 
   it('sets MfaConfiguration to OFF when MFA is disabled', () => {
     const template = generateCfnTemplate(baseConfig);
-    expect(template).toContain('MfaConfiguration: OFF');
+    expect(template).toContain("MfaConfiguration: 'OFF'");
   });
 
   it('sets MfaConfiguration to ON and lists enabled MFAs when required', () => {
@@ -79,7 +79,7 @@ describe('generateCfnTemplate()', () => {
       ...baseConfig,
       mfa: { enabled: true, mode: 'required', methods: ['totp', 'sms'] },
     });
-    expect(template).toContain('MfaConfiguration: ON');
+    expect(template).toContain("MfaConfiguration: 'ON'");
     expect(template).toContain('- SOFTWARE_TOKEN_MFA');
     expect(template).toContain('- SMS_MFA');
     expect(template).toContain('CognitoSMSRole');
@@ -91,7 +91,7 @@ describe('generateCfnTemplate()', () => {
       ...baseConfig,
       mfa: { enabled: true, mode: 'optional', methods: ['totp'] },
     });
-    expect(template).toContain('MfaConfiguration: OPTIONAL');
+    expect(template).toContain("MfaConfiguration: 'OPTIONAL'");
   });
 
   it('renders an AWS::Cognito::UserPoolClient resource per app client', () => {
@@ -138,9 +138,38 @@ describe('generateCfnTemplate()', () => {
     expect(withoutTriggers).not.toContain('LambdaConfig:');
   });
 
-  it('exports a UserPoolId and one AppClientId output per client', () => {
+  it('exports ProjectName, the user pool, and the single client under plain names', () => {
     const template = generateCfnTemplate(baseConfig);
-    expect(template).toContain('UserPoolId:');
+    expect(template).toContain("ProjectName:\n    Value: !Ref 'AWS::StackName'");
+    expect(template).toContain('CognitoUserPoolId:');
+    expect(template).toContain('CognitoUserPoolArn:');
+    expect(template).toContain('CognitoUserPoolClientId:');
+    expect(template).not.toContain('CognitoClientSecret:');
+  });
+
+  it('exports the client secret when GenerateSecret is enabled', () => {
+    const template = generateCfnTemplate({
+      ...baseConfig,
+      appClients: [{ ...baseConfig.appClients[0], generateSecret: true }],
+    });
+    expect(template).toContain('CognitoUserPoolClientId:');
+    expect(template).toContain(
+      'CognitoClientSecret:\n    Value: !GetAtt AppClientwebclient.ClientSecret',
+    );
+  });
+
+  it('falls back to per-client output names when there are multiple app clients', () => {
+    const template = generateCfnTemplate({
+      ...baseConfig,
+      appClients: [
+        { ...baseConfig.appClients[0], name: 'web-client', generateSecret: true },
+        { ...baseConfig.appClients[0], name: 'mobile-client', generateSecret: false },
+      ],
+    });
     expect(template).toContain('AppClientwebclientId:');
+    expect(template).toContain('AppClientwebclientSecret:');
+    expect(template).toContain('AppClientmobileclientId:');
+    expect(template).not.toContain('CognitoUserPoolClientId:');
+    expect(template).not.toContain('CognitoClientSecret:');
   });
 });
