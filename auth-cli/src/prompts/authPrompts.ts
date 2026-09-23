@@ -9,6 +9,7 @@ import {
   PROVIDER_CHOICES,
   REFRESH_TOKEN_AUTH_FLOW,
   SIGNIN_OPTION_CHOICES,
+  TOKEN_VALIDITY_LIMITS,
 } from '../config/constants';
 import {
   filterNumberInRange,
@@ -318,6 +319,8 @@ async function collectCustomAttributes(): Promise<CustomAttribute[]> {
 export async function collectAppClients(existing: AppClient[] = []): Promise<AppClient[]> {
   const clients: AppClient[] = [...existing];
 
+  const { accessToken, idToken, refreshToken } = TOKEN_VALIDITY_LIMITS;
+
   for (let index = clients.length; ; index++) {
     logger.info(`\nApp Client ${index + 1}`);
 
@@ -345,26 +348,26 @@ export async function collectAppClients(existing: AppClient[] = []): Promise<App
       {
         type: 'input',
         name: 'accessTokenValidity',
-        message: 'Access token validity (minutes, max 1440):',
+        message: `Access token validity (minutes, ${accessToken.min}-${accessToken.max}):`,
         default: '60',
-        filter: filterNumberInRange(1, 1440),
-        validate: validateRange(1, 1440, 'Access token validity'),
+        filter: filterNumberInRange(accessToken.min, accessToken.max),
+        validate: validateRange(accessToken.min, accessToken.max, 'Access token validity'),
       },
       {
         type: 'input',
         name: 'idTokenValidity',
-        message: 'ID token validity (minutes, max 1440):',
+        message: `ID token validity (minutes, ${idToken.min}-${idToken.max}):`,
         default: '60',
-        filter: filterNumberInRange(1, 1440),
-        validate: validateRange(1, 1440, 'ID token validity'),
+        filter: filterNumberInRange(idToken.min, idToken.max),
+        validate: validateRange(idToken.min, idToken.max, 'ID token validity'),
       },
       {
         type: 'input',
         name: 'refreshTokenValidity',
-        message: 'Refresh token validity (days, max 3650):',
+        message: `Refresh token validity (days, ${refreshToken.min}-${refreshToken.max}):`,
         default: '30',
-        filter: filterNumberInRange(1, 3650),
-        validate: validateRange(1, 3650, 'Refresh token validity'),
+        filter: filterNumberInRange(refreshToken.min, refreshToken.max),
+        validate: validateRange(refreshToken.min, refreshToken.max, 'Refresh token validity'),
       },
     ]);
 

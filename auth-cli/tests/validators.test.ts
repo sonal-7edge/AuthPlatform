@@ -133,6 +133,36 @@ describe('ConfigValidator', () => {
       expect(result.valid).toBe(false);
     });
 
+    it.each([
+      ['accessTokenValidity', 4],
+      ['accessTokenValidity', 1441],
+      ['idTokenValidity', 3],
+      ['idTokenValidity', 1441],
+      ['refreshTokenValidity', 0],
+      ['refreshTokenValidity', 3651],
+    ])('returns valid=false when %s is %d (outside Cognito limits)', (field, value) => {
+      const config = {
+        ...validConfig,
+        appClients: [{ ...validConfig.appClients[0], [field]: value }],
+      };
+      expect(validator.validate(config).valid).toBe(false);
+    });
+
+    it.each([
+      ['accessTokenValidity', 5],
+      ['accessTokenValidity', 1440],
+      ['idTokenValidity', 5],
+      ['idTokenValidity', 1440],
+      ['refreshTokenValidity', 1],
+      ['refreshTokenValidity', 3650],
+    ])('returns valid=true when %s is %d (Cognito boundary)', (field, value) => {
+      const config = {
+        ...validConfig,
+        appClients: [{ ...validConfig.appClients[0], [field]: value }],
+      };
+      expect(validator.validate(config).valid).toBe(true);
+    });
+
     it('returns valid=false when no app clients are configured', () => {
       const config = { ...validConfig, appClients: [] };
       const result = validator.validate(config);

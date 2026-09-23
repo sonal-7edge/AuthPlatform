@@ -81,6 +81,15 @@ export const AUTH_FLOW_CHOICES: Array<{ name: string; value: AuthFlow }> = [
 
 export const REFRESH_TOKEN_AUTH_FLOW: AuthFlow = 'ALLOW_REFRESH_TOKEN_AUTH';
 
+// Cognito app client token validity limits, in the units the generated template uses
+// (TokenValidityUnits: AccessToken/IdToken = minutes, RefreshToken = days).
+// Access/ID tokens: 5 minutes – 1 day. Refresh token: 60 minutes – 10 years (1 – 3650 days).
+export const TOKEN_VALIDITY_LIMITS = {
+  accessToken: { min: 5, max: 1440 },
+  idToken: { min: 5, max: 1440 },
+  refreshToken: { min: 1, max: 3650 },
+} as const;
+
 export const LAMBDA_TRIGGER_FIELDS: Array<{
   key: keyof import('../types').LambdaTriggers;
   label: string;

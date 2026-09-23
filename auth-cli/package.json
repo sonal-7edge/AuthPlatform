@@ -1,6 +1,6 @@
 {
   "name": "@akhileshb/auth-cli",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Internal CLI tool for standardizing AWS Cognito resource provisioning",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

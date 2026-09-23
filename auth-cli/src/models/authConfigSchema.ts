@@ -6,7 +6,10 @@ import {
   POOL_NAME_REGEX,
   REFRESH_TOKEN_AUTH_FLOW,
   RESERVED_ATTRIBUTE_NAMES,
+  TOKEN_VALIDITY_LIMITS,
 } from '../config/constants';
+
+const { accessToken, idToken, refreshToken } = TOKEN_VALIDITY_LIMITS;
 
 const PasswordPolicySchema = z.object({
   minLength: z
@@ -59,18 +62,18 @@ const AppClientSchema = z
     accessTokenValidity: z
       .number()
       .int()
-      .min(1)
-      .max(1440, 'Access token validity must be at most 1440 minutes'),
+      .min(accessToken.min, `Access token validity must be at least ${accessToken.min} minutes`)
+      .max(accessToken.max, `Access token validity must be at most ${accessToken.max} minutes`),
     idTokenValidity: z
       .number()
       .int()
-      .min(1)
-      .max(1440, 'ID token validity must be at most 1440 minutes'),
+      .min(idToken.min, `ID token validity must be at least ${idToken.min} minutes`)
+      .max(idToken.max, `ID token validity must be at most ${idToken.max} minutes`),
     refreshTokenValidity: z
       .number()
       .int()
-      .min(1)
-      .max(3650, 'Refresh token validity must be at most 3650 days'),
+      .min(refreshToken.min, `Refresh token validity must be at least ${refreshToken.min} day`)
+      .max(refreshToken.max, `Refresh token validity must be at most ${refreshToken.max} days`),
     callbackUrls: z.array(z.string().url('Each callback URL must be a valid URL')),
     logoutUrls: z.array(z.string().url('Each logout URL must be a valid URL')),
   })
