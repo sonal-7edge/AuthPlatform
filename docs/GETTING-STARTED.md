@@ -206,125 +206,43 @@ through a React form is much harder than through curl.
 
 ## Step 3 — frontend
 
-The whole frontend, start to finish:
-
 ```bash
-# 1. fresh app
 npm create vite@latest my-app -- --template react
 cd my-app
 npm install
 
-# 2. install the auth package — scaffolds src/auth/ (and nothing else)
-npm install @7edge/auth-client
-
-# 3. finish the setup — asks before it touches .env, main.jsx or App.jsx
+npm install github:Nishan666/auth-client
 npx auth-client setup
-
-# 4. point it at the API from step 2
-#    .env  ← edit the placeholder auth-client wrote
-#    VITE_API_BASE_URL=https://abc123.execute-api.ap-south-1.amazonaws.com/v1
-
-# 5. run
-npm run dev
 ```
 
-That is the entire integration. The rest of this section explains what those
-five commands did, and what to do if you decline any of the prompts.
+`npx auth-client setup` asks before it touches `.env`, `src/main.jsx` or
+`src/App.jsx`, and prints the manual equivalent if you decline. Run
+`npx auth-client status` to see what is outstanding, `npx auth-client undo` to
+restore `main.jsx` and `App.jsx` from the `.bak` copies it keeps.
 
-### What each step does
+The package is installed from GitHub — it is not published to npm, so
+`npm install @7edge/auth-client` fails with a 404. `@7edge/auth-client` is the
+name you *import* by; the git URL is how you install it.
 
-**Step 2 — install.** Scaffolds `src/auth/` (7 screens, 7 primitives,
-validation, constants) and prints a banner. It deliberately leaves `.env`,
-`src/main.jsx` and `src/App.jsx` **untouched** — it never edits a file you
-wrote without asking. It also drops `src/auth/NEXT-STEPS.txt` listing what is
-left; delete it once you are set up.
-
-**Step 3 — `npx auth-client setup`.** The two steps that modify your files, each
-behind a prompt:
-
-| Prompt | What it does | If you decline |
-|---|---|---|
-| *Create / append `.env`* | adds `VITE_API_BASE_URL` with a placeholder value | it prints the block to paste |
-| *Wire them up now?* | replaces `src/main.jsx` + `src/App.jsx`, keeping `.bak` copies | it points at the two files to copy |
-
-Run the pieces individually if you prefer: `npx auth-client env` (just `.env`),
-`npx auth-client wire` (just the app files), `npx auth-client init` (just
-`src/auth/`). `npx auth-client status` shows what is done and what is left;
-`npx auth-client undo` restores `main.jsx` and `App.jsx` from the `.bak` copies.
-
-**Step 4 — the base URL.** `setup` writes a **placeholder**, not a working URL:
+Then set the base URL. `setup` writes a **placeholder**, not a working URL:
 
 ```bash
+# .env
 VITE_API_BASE_URL=https://REPLACE-ME.execute-api.ap-south-1.amazonaws.com/v1
 ```
 
-Replace it with the API URL from [step 2](#step-2--deploy-the-auth-api), then
+Replace it with the API URL from [step 2](#step-2--deploy-the-auth-api) and
 restart the dev server — Vite reads `.env` only at startup. Leaving the
 placeholder in produces a network error on the first request, not a build error.
 
-### Wiring it by hand
-
-If you declined the wiring prompt, this is what it would have written:
-
-```jsx
-// src/main.jsx
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import '@7edge/auth-client/style.css'   // once, at the root
-import App from './App.jsx'
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode><App /></StrictMode>
-)
-```
-
-```jsx
-// src/App.jsx
-import { AuthProvider, useAuth, AuthFlow, authConfig } from './auth'
-
-function Dashboard() {
-  const { user, logout } = useAuth()
-  return (
-    <div style={{ padding: 32, fontFamily: 'system-ui' }}>
-      <h1>Signed in as {user?.email}</h1>
-      <button onClick={logout}>Log out</button>
-    </div>
-  )
-}
-
-// Split out from App: a component cannot read a context its own parent provides.
-function Root() {
-  const { isAuthenticated } = useAuth()
-  return isAuthenticated ? <Dashboard /> : <AuthFlow />
-}
-
-export default function App() {
-  return (
-    <AuthProvider config={authConfig}>
-      <Root />
-    </AuthProvider>
-  )
-}
-```
-
-Two things worth noting. `authConfig` comes from the package
-(`@7edge/auth-client/config` via the `./auth` barrel), so there is no config
-file to maintain — it reads `VITE_API_BASE_URL` for you. And `Root` is a
-separate component on purpose: `useAuth()` cannot run in `App`, because a
-component cannot consume a context that it renders the provider for.
-
-The generated files import neither `src/App.css` nor `src/index.css` — they use
-`@7edge/auth-client/style.css` and `src/auth/home.css` instead. Vite's starter
-CSS is left orphaned, so delete it to stop it interfering:
-
 ```bash
-rm -f src/App.css src/index.css
+npm run dev
 ```
 
 Everything in `src/auth/` is **yours**. An upgrade will not overwrite it.
 
-Full frontend detail — the integration paths, calling your own API with the
-session, route protection, theming — is in
+Full frontend detail — the integration paths, wiring it by hand, calling your
+own API with the session, route protection, theming — is in
 [auth-client/docs/INTEGRATION.md](../auth-client/docs/INTEGRATION.md).
 
 ---
@@ -364,7 +282,8 @@ you to the OTP screen and strands you there, because the tokens were in the
 sign-in response that screen discarded. Fix by upgrading:
 
 ```bash
-npm install @7edge/auth-client@latest
+npm uninstall @7edge/auth-client            # npm won't re-pull otherwise
+npm install github:Nishan666/auth-client
 npx auth-client init --force   # re-scaffold the screens; commit your edits first
 ```
 
@@ -454,10 +373,16 @@ refresh skew. Raise the TTL, or lower `expirySkewSeconds`.
 
 **Stuck on the OTP screen after a correct sign-in** — you are on auth-client
 0.2.0. Check with `npm ls @7edge/auth-client`; the install banner also prints
-the version. Installing from a git URL (`npm install github:Nishan666/auth-client`)
-pins you to whatever that branch holds, which may be behind the published
-package — prefer `npm install @7edge/auth-client@latest`. See
-[sign-in has no OTP](#sign-in-has-no-otp).
+the version. The install resolves to whatever the git branch currently holds.
+Re-running the install does **not** pull newer commits — npm prints `up to date`
+and runs nothing, `--force` included. Remove the dependency first:
+
+```bash
+npm uninstall @7edge/auth-client
+npm install github:Nishan666/auth-client
+```
+
+See [sign-in has no OTP](#sign-in-has-no-otp).
 
 **`.env` is missing after `npm install`** — expected. Install scaffolds
 `src/auth/` only; `.env` comes from `npx auth-client setup` (or

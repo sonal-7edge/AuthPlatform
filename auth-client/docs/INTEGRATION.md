@@ -68,8 +68,12 @@ never a second one, or hooks break.
 ## 1. Install
 
 ```bash
-npm install @7edge/auth-client
+npm install github:Nishan666/auth-client
 ```
+
+The package is installed from GitHub — it is not published to npm, so
+`npm install @7edge/auth-client` fails with a 404. `@7edge/auth-client` is the
+name you *import* by; the git URL is how you install it.
 
 Installing scaffolds `src/auth/` and deliberately touches nothing else — not
 `.env`, not `main.jsx`, not `App.jsx`. It also drops
@@ -221,6 +225,18 @@ export default function App() {
 That is the whole integration. `AuthFlow` handles sign-in, sign-up, account
 confirmation and the password-reset journey; `isAuthenticated` flips the moment
 sign-in succeeds, and your app renders.
+
+`Shell` is a separate component on purpose: `useAuth()` cannot run inside `App`
+itself, because a component cannot consume a context that it renders the
+provider for. The generated `App.jsx` calls the same split `Root`.
+
+On a fresh Vite app, delete the starter stylesheets — the generated files import
+`@7edge/auth-client/style.css` and `src/auth/home.css` instead, leaving Vite's
+orphaned and liable to interfere:
+
+```bash
+rm -f src/App.css src/index.css
+```
 
 The stylesheet is scoped — it carries no global reset, so it will not restyle
 your pages. Skip it only if you are on [Path B](#path-b--your-own-screens-our-hook)
