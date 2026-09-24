@@ -78,8 +78,12 @@ export function createTokenManager({
        * Sending it is not a trust decision: Cognito checks the hash against
        * the user that actually owns the refresh token, so a wrong username
        * fails the call rather than redirecting it at someone else's session.
+       *
+       * Falls back to the username the store kept at save time: after a
+       * reload the id_token can be missing while the refresh token survives,
+       * and a refresh without it is rejected as "Incorrect credentials".
        */
-      const username = decodeJWT(currentIdToken)?.['cognito:username']
+      const username = decodeJWT(currentIdToken)?.['cognito:username'] ?? tokenStore.getUsername()
 
       const result = await requestRefresh({
         refreshToken,
