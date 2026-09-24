@@ -97,6 +97,9 @@ export interface AuthConfig {
   appClients: AppClient[];
   lambdaTriggers: LambdaTriggers;
   customAttributes: CustomAttribute[];
+  // Stack name from the last successful `auth deploy`, kept in the template's Metadata so
+  // regenerating the template (e.g. `add-client`) doesn't lose it.
+  stackName?: string;
 }
 
 export interface ValidationResult {
