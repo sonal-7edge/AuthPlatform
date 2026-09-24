@@ -6,6 +6,7 @@
 export const DEFAULT_STORAGE_KEYS = {
   TOKENS: 'auth_tokens',
   USER: 'auth_user',
+  USERNAME: 'auth_username',
 }
 
 /**

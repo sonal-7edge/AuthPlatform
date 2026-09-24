@@ -1,4 +1,5 @@
 import { DEFAULT_STORAGE_KEYS } from './constants'
+import { decodeJWT } from './jwt'
 
 function createMemoryStorage() {
   const store = new Map()
@@ -110,6 +111,13 @@ export function createTokenStore({ storage, keys } = {}) {
       if (!incoming) return null
       const merged = { ...(readJSON(KEYS.TOKENS) || {}), ...incoming }
       writeJSON(KEYS.TOKENS, merged)
+
+      // Kept apart from the blob so a refresh can still compute Cognito's
+      // SECRET_HASH when the stored id_token is gone or undecodable — the
+      // refresh token alone doesn't carry the username.
+      const username = decodeJWT(merged.id_token)?.['cognito:username']
+      if (username) writeJSON(KEYS.USERNAME, username)
+
       return merged
     },
 
@@ -127,6 +135,11 @@ export function createTokenStore({ storage, keys } = {}) {
 
     getRefreshToken() {
       return readJSON(KEYS.TOKENS)?.refresh_token ?? null
+    },
+
+    /** The `cognito:username` claim from the last id_token we saved. */
+    getUsername() {
+      return readJSON(KEYS.USERNAME)
     },
 
     saveUser(user) {
