@@ -141,14 +141,14 @@ describe('validateAtLeastOne() (used for sign-in options and MFA methods)', () =
 
 describe('validateRange() (used for password policy and token validity steps)', () => {
   it('accepts values within the min/max bounds', () => {
-    const check = validateRange(1, 1440, 'Access token validity');
-    expect(check(1)).toBe(true);
+    const check = validateRange(5, 1440, 'Access token validity');
+    expect(check(5)).toBe(true);
     expect(check(1440)).toBe(true);
   });
 
   it('rejects values outside the min/max bounds', () => {
-    const check = validateRange(1, 1440, 'Access token validity');
-    expect(check(0)).not.toBe(true);
+    const check = validateRange(5, 1440, 'Access token validity');
+    expect(check(4)).not.toBe(true);
     expect(check(1441)).not.toBe(true);
   });
 });

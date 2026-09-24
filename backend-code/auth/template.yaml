@@ -13,18 +13,20 @@ Description: >-
 #        the two logical ids   MyThingLogGroup / MyThingFunction
 #        LogGroupName suffix   -my-thing
 #        FunctionName suffix   -my-thing
-#        Handler               auth/handlers/my-thing.handler
+#        Handler               handlers/my-thing.handler
 #        Path                  /auth/my-thing
 #   3. Protected route? add the Auth block (see ChangePasswordFunction).
-#   4. From backend-code/ (where package.json is):
-#        sam build -t auth/template.yaml --cached --parallel && sam deploy
+#   4. From this folder (where package.json and samconfig.toml are):
+#        npm run deploy:env
 #
 # Everything shared — runtime, memory, timeout, env vars — is in Globals, so
 # a new endpoint is ~18 lines and repeats nothing.
 #
-# Handler paths carry the "auth/" prefix because CodeUri is backend-code/ —
-# that is where package.json lives, and sam installs dependencies from the
-# package.json inside CodeUri.
+# CodeUri is this folder, so it is self-contained: package.json, samconfig.toml
+# and the handlers all live here, and sam installs dependencies from the
+# package.json beside this template. Handler paths are therefore handlers/*.
+# That is what lets the whole folder be dropped into any project and deployed
+# without touching anything outside it.
 #
 # The log group is separate from the function on purpose: it is the only way
 # to control retention. Without it Lambda creates the group itself on first
@@ -169,9 +171,9 @@ Globals:
   Function:
     Runtime: nodejs24.x
     Architectures: [arm64]
-    # backend-code/ — sam copies it and installs the production dependencies
-    # from backend-code/package.json. Handlers are therefore auth/handlers/*.
-    CodeUri: ../
+    # This folder — sam copies it and installs the production dependencies
+    # from the package.json beside this template. Handlers are handlers/*.
+    CodeUri: ./
     MemorySize: 256
     Timeout: 15
     Environment:
@@ -344,7 +346,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-signup
       Description: Register a new user in the Cognito user pool
       # The implemented handler is sign_up.js, not signup.js.
-      Handler: auth/handlers/sign_up.handler
+      Handler: handlers/sign_up.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -366,7 +368,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-signin
       Description: Authenticate a user and start the OTP challenge
-      Handler: auth/handlers/sign_in.handler
+      Handler: handlers/sign_in.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -388,7 +390,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-otp
       Description: Complete the OTP round and return tokens
-      Handler: auth/handlers/verify_otp.handler
+      Handler: handlers/verify_otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -410,7 +412,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-refresh
       Description: Exchange a refresh token for a new id token
-      Handler: auth/handlers/refresh_token.handler
+      Handler: handlers/refresh_token.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -432,7 +434,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-tokens
       Description: Exchange an established session (Bearer idToken) for tokens
-      Handler: auth/handlers/tokens.handler
+      Handler: handlers/tokens.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -460,7 +462,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-resend-otp
       Description: Resend the confirmation code
-      Handler: auth/handlers/resend-otp.handler
+      Handler: handlers/resend-otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -482,7 +484,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-forgot-password
       Description: Start the forgot-password flow
-      Handler: auth/handlers/forgot_password.handler
+      Handler: handlers/forgot_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -504,7 +506,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-reset-otp
       Description: Validate the password reset code
-      Handler: auth/handlers/verify_reset_otp.handler
+      Handler: handlers/verify_reset_otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -526,7 +528,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-reset-password
       Description: Complete the forgot-password flow with a new password
-      Handler: auth/handlers/reset_password.handler
+      Handler: handlers/reset_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -552,7 +554,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-logout
       Description: Globally sign the user out and revoke their tokens
-      Handler: auth/handlers/logout.handler
+      Handler: handlers/logout.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -580,7 +582,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-change-password
       Description: Change the password of the signed-in user
-      Handler: auth/handlers/change_password.handler
+      Handler: handlers/change_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -606,7 +608,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-delete-account
       Description: Delete the signed-in user from the user pool
-      Handler: auth/handlers/delete_account.handler
+      Handler: handlers/delete_account.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:

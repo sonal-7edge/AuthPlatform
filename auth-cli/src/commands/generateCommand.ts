@@ -4,13 +4,20 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { Command } from 'commander';
 import { runAuthPrompts } from '../prompts/authPrompts';
+import { filterYesNo, transformYesNo, validateYesNo } from '../prompts/yesNoQuestion';
 import { ConfigService } from '../services/configService';
 import { ConfigValidator } from '../validators/configValidator';
 import { generateCfnTemplate } from '../utils/cfnGenerator';
 import { cfnTemplateToAuthConfig, isCfnTemplate } from '../utils/cfnParser';
 import { logger } from '../utils/logger';
+import { requireAwsIdentity } from '../utils/awsIdentity';
 import { hasAwsCredentialsInEnv, runDeploy } from './deployCommand';
-import { CFN_OUTPUT_FILE } from '../config/constants';
+import {
+  CFN_OUTPUT_FILE,
+  DEPLOY_ENVIRONMENT_CHOICES,
+  DEPLOY_ENVIRONMENTS,
+  DeployEnvironment,
+} from '../config/constants';
 import {
   DEFAULT_RESOURCE_DIR,
   ensureDirExists,
@@ -82,6 +89,8 @@ export function registerGenerateCommand(program: Command): void {
       `Output path for the CloudFormation template (default: ${DEFAULT_RESOURCE_DIR}/${CFN_OUTPUT_FILE})`,
     )
     .action(async (options: { output?: string }) => {
+      await requireAwsIdentity();
+
       const outputPath =
         options.output ?? resolveOutputPath(CFN_OUTPUT_FILE, resolveDefaultOutputDir());
 
@@ -115,10 +124,12 @@ async function promptDeploy(
 ): Promise<void> {
   const { shouldDeploy } = await inquirer.prompt<{ shouldDeploy: boolean }>([
     {
-      type: 'confirm',
+      type: 'input',
       name: 'shouldDeploy',
-      message: 'Deploy this stack now with `sam deploy`?',
-      default: false,
+      message: 'Deploy this stack now with `sam deploy`? (y/n)',
+      filter: filterYesNo,
+      validate: validateYesNo,
+      transformer: transformYesNo,
     },
   ]);
 
@@ -133,11 +144,9 @@ async function promptDeploy(
     ]);
   }
 
-  const { stackName, region, profile, ready } = await inquirer.prompt<{
+  const { stackName, environment } = await inquirer.prompt<{
     stackName: string;
-    region: string;
-    profile: string;
-    ready: boolean;
+    environment: DeployEnvironment;
   }>([
     {
       type: 'input',
@@ -146,28 +155,17 @@ async function promptDeploy(
       default: defaultStackName,
     },
     {
-      type: 'input',
-      name: 'region',
-      message: 'AWS region to deploy into:',
-      default: defaultRegion,
-    },
-    {
-      type: 'input',
-      name: 'profile',
-      message: 'AWS CLI profile (leave blank to use exported credentials):',
-    },
-    {
-      type: 'confirm',
-      name: 'ready',
-      message: 'Credentials are exported and ready — continue with deployment?',
-      default: false,
+      type: 'list',
+      name: 'environment',
+      message: "Deploy stage (sets the template's Environment parameter):",
+      choices: DEPLOY_ENVIRONMENT_CHOICES,
+      default: DEPLOY_ENVIRONMENTS[0],
     },
   ]);
 
-  if (!ready) {
-    logger.info('Deployment skipped.');
-    return;
-  }
-
-  await runDeploy(templatePath, { stackName, region, profile: profile || undefined });
+  await runDeploy(templatePath, {
+    stackName,
+    region: defaultRegion,
+    environment,
+  });
 }

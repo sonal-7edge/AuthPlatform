@@ -2,7 +2,7 @@
 
 Internal CLI tool for standardizing AWS Cognito resource provisioning.
 
-`auth generate` runs an interactive wizard that collects authentication requirements, validates them, and writes a deployable CloudFormation template — no manual YAML authoring required. `auth add-client` reopens an existing config/template to add more app clients, `auth validate` checks a hand-edited `auth-config.yaml`, and `auth deploy` ships the generated template to AWS via `sam deploy`. The wizard mirrors the `cognito-panel` web UI step for step, so both tools produce the same shape of config from the same questions.
+`auth generate` runs an interactive wizard that collects authentication requirements, validates them, and writes a deployable CloudFormation template — no manual YAML authoring required. `auth add-client` reopens an existing config/template to add more app clients, and `auth deploy` ships the generated template to AWS via `sam deploy`. The wizard mirrors the `cognito-panel` web UI step for step, so both tools produce the same shape of config from the same questions.
 
 ---
 
@@ -33,6 +33,14 @@ export AWS_SECRET_ACCESS_KEY=...
 export AWS_SESSION_TOKEN=...   # only if using temporary/SSO credentials
 ```
 
+Both `auth generate` and `auth deploy` verify these credentials via AWS STS as their very first step — before the wizard runs, or before `sam deploy` is invoked — and print which account they resolved:
+
+```
+ℹ AWS Account: 123456789012 (arn:aws:iam::123456789012:user/akhilesh)
+```
+
+If no valid credentials are found, the command exits immediately with an error instead of proceeding.
+
 ---
 
 ## Usage
@@ -52,7 +60,7 @@ This runs the wizard and generates a `cognito-template.yaml` CloudFormation temp
 
 ### `auth generate`
 
-Runs the interactive wizard and generates a CloudFormation template for the Cognito User Pool, its app clients, and any Lambda triggers — no `auth-config.yaml` is written.
+Verifies your AWS credentials via STS first (see [Prerequisites for deploying](#prerequisites-for-deploying)), then runs the interactive wizard and generates a CloudFormation template for the Cognito User Pool, its app clients, and any Lambda triggers — no `auth-config.yaml` is written.
 
 ```bash
 auth generate
@@ -84,29 +92,17 @@ If the input file is an `auth-config.yaml`, it's updated and saved back to disk 
 
 ### `auth deploy <file>`
 
-Deploys a generated `cognito-template.yaml` with `sam deploy`. Requires AWS credentials exported in the shell (or `--profile`/`AWS_PROFILE`) and the AWS SAM CLI installed (auto-installed on Linux if missing).
+Verifies your AWS credentials via STS first — using `--profile` if given, otherwise the shell's exported credentials/`AWS_PROFILE` — then deploys a generated `cognito-template.yaml` with `sam deploy`. Requires the AWS SAM CLI installed (auto-installed on Linux if missing). Always asks for the stack name interactively (defaulting to the template's pool name) — there's no flag to skip that prompt.
 
 ```bash
-auth deploy ./resources/auth/cognito-template.yaml --stack-name my-app-users
-auth deploy ./resources/auth/cognito-template.yaml -s my-app-users -p my-profile -r us-east-1
+auth deploy ./resources/auth/cognito-template.yaml
+auth deploy ./resources/auth/cognito-template.yaml -p my-profile -r us-east-1
 ```
 
 | Option | Description |
 |---|---|
-| `-s, --stack-name <name>` | CloudFormation stack name (required) |
 | `-p, --profile <name>` | AWS CLI profile to use for credentials |
 | `-r, --region <region>` | AWS region to deploy into (defaults to the profile/env region) |
-
-### `auth validate [file]`
-
-Validates an existing `auth-config.yaml`. Defaults to `auth-config.yaml` in the current directory.
-
-```bash
-auth validate
-auth validate ./config/auth-config.yaml
-```
-
-Exits with code `0` on success, `1` on failure.
 
 ### `auth --help`
 
@@ -117,7 +113,6 @@ auth --help
 auth generate --help
 auth add-client --help
 auth deploy --help
-auth validate --help
 ```
 
 ---
@@ -142,8 +137,8 @@ The wizard asks questions in eight steps, matching the `cognito-panel` UI:
 | 6. App Clients (repeatable) | Client name | Text | default `web-client`, then `client-N` |
 | | Generate client secret? | Confirm | default no |
 | | Auth flows | Multi-select | SRP / User+Password / Custom Auth / Admin Password Auth (Refresh Token is always included) |
-| | Access / ID token validity | Number (minutes, max 1440) | default 60 each |
-| | Refresh token validity | Number (days, max 3650) | default 30 |
+| | Access / ID token validity | Number (minutes, 5–1440) | default 60 each |
+| | Refresh token validity | Number (days, 1–3650) | default 30 |
 | | Callback URLs / Logout URLs | Repeated text | add as many as needed, blank to finish |
 | | Add another client? | Confirm | loops back to the top of step 6 |
 | 7. Lambda Triggers | 10 trigger ARNs | Text (all optional) | Pre Sign-up, Post Confirmation, Pre Authentication, Post Authentication, Custom Message, Pre Token Generation, User Migration, Define/Create/Verify Auth Challenge |
@@ -204,7 +199,7 @@ lambdaTriggers:
 - **Region** — must be one of the 17 supported AWS regions
 - **User Pool Name** — required; letters, numbers, hyphens, and underscores only
 - **Sign-in options** — at least one of `email`, `phone`, `username`
-- **Password policy** — minimum length 6-20, temporary password validity 1-365 days
+- **Password policy** — minimum length 6-20, temporary password validity 1-365 days. Any field left out of a hand-written `auth-config.yaml` (`minLength`, `requireUppercase`, `requireLowercase`, `requireNumbers`, `requireSymbols`, `tempPasswordDays`) defaults to the same values as the wizard: `8`, `true`, `true`, `true`, `false`, `7`
 - **MFA** — at least one method required when MFA is enabled
 - **App clients** — at least one client; each must include `ALLOW_REFRESH_TOKEN_AUTH`; token validity within AWS limits; callback/logout URLs must be valid URLs
 - **Lambda triggers** — each ARN, if set, must match `arn:aws:lambda:REGION:ACCOUNT:function:NAME`
@@ -216,7 +211,6 @@ lambdaTriggers:
 ```bash
 # Run in dev mode (no build required)
 npm run dev -- generate
-npm run dev -- validate
 
 # Type-check
 npx tsc --noEmit
@@ -247,17 +241,17 @@ auth-cli/
 │   ├── commands/         # Commander.js command registrations
 │   │   ├── generateCommand.ts
 │   │   ├── addClientCommand.ts
-│   │   ├── deployCommand.ts
-│   │   └── validateCommand.ts
+│   │   └── deployCommand.ts
 │   ├── prompts/          # Inquirer.js prompt definitions
 │   │   └── authPrompts.ts
 │   ├── validators/       # Zod-based validation logic
 │   │   └── configValidator.ts
 │   ├── models/           # Zod schemas
 │   │   └── authConfigSchema.ts
-│   ├── utils/            # File I/O, logger, CloudFormation generator
+│   ├── utils/            # File I/O, logger, CloudFormation generator, AWS identity check
 │   │   ├── fileUtils.ts
 │   │   ├── logger.ts
+│   │   ├── awsIdentity.ts
 │   │   └── cfnGenerator.ts
 │   ├── services/         # Business logic
 │   │   ├── IConfigService.ts

@@ -6,23 +6,28 @@ import {
   POOL_NAME_REGEX,
   REFRESH_TOKEN_AUTH_FLOW,
   RESERVED_ATTRIBUTE_NAMES,
+  TOKEN_VALIDITY_LIMITS,
 } from '../config/constants';
+
+const { accessToken, idToken, refreshToken } = TOKEN_VALIDITY_LIMITS;
 
 const PasswordPolicySchema = z.object({
   minLength: z
     .number()
     .int()
     .min(6, 'Minimum length must be at least 6')
-    .max(20, 'Minimum length must be at most 20'),
-  requireUppercase: z.boolean(),
-  requireLowercase: z.boolean(),
-  requireNumbers: z.boolean(),
-  requireSymbols: z.boolean(),
+    .max(20, 'Minimum length must be at most 20')
+    .default(8),
+  requireUppercase: z.boolean().default(true),
+  requireLowercase: z.boolean().default(true),
+  requireNumbers: z.boolean().default(true),
+  requireSymbols: z.boolean().default(false),
   tempPasswordDays: z
     .number()
     .int()
     .min(1, 'Temporary password validity must be at least 1 day')
-    .max(365, 'Temporary password validity must be at most 365 days'),
+    .max(365, 'Temporary password validity must be at most 365 days')
+    .default(7),
 });
 
 const MfaSchema = z
@@ -57,18 +62,18 @@ const AppClientSchema = z
     accessTokenValidity: z
       .number()
       .int()
-      .min(1)
-      .max(1440, 'Access token validity must be at most 1440 minutes'),
+      .min(accessToken.min, `Access token validity must be at least ${accessToken.min} minutes`)
+      .max(accessToken.max, `Access token validity must be at most ${accessToken.max} minutes`),
     idTokenValidity: z
       .number()
       .int()
-      .min(1)
-      .max(1440, 'ID token validity must be at most 1440 minutes'),
+      .min(idToken.min, `ID token validity must be at least ${idToken.min} minutes`)
+      .max(idToken.max, `ID token validity must be at most ${idToken.max} minutes`),
     refreshTokenValidity: z
       .number()
       .int()
-      .min(1)
-      .max(3650, 'Refresh token validity must be at most 3650 days'),
+      .min(refreshToken.min, `Refresh token validity must be at least ${refreshToken.min} day`)
+      .max(refreshToken.max, `Refresh token validity must be at most ${refreshToken.max} days`),
     callbackUrls: z.array(z.string().url('Each callback URL must be a valid URL')),
     logoutUrls: z.array(z.string().url('Each logout URL must be a valid URL')),
   })
@@ -88,7 +93,11 @@ const CustomAttributeSchema = z.object({
       message: 'email and name are already built-in attributes; choose a different name',
     }),
   type: z.enum(['String', 'Number', 'Boolean', 'DateTime']),
-  required: z.boolean(),
+  // Cognito rejects `Required: true` for any custom attribute at deploy time — only built-in
+  // attributes like `email` support that — so this is caught here instead.
+  required: z.literal(false, {
+    errorMap: () => ({ message: 'Custom attributes cannot be required (Cognito limitation)' }),
+  }),
   mutable: z.boolean(),
   minLength: z.number().int().min(0).optional(),
   maxLength: z.number().int().min(1).optional(),
