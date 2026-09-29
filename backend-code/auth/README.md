@@ -92,7 +92,7 @@ See `.env.example`: `AWS_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
 Cognito's, set on the user pool.
 
 Deployed, these come from `template.yaml` parameters. **`ResetTokenSecret` has no default and no
-empty fallback on purpose** — `lib/resetToken.js` passes it straight to `crypto.createHmac`, which
+empty fallback on purpose** — `lib/reset_token.js` passes it straight to `crypto.createHmac`, which
 throws `TypeError: The "key" argument must be of type string` on an unset value, and a shared
 default would let anyone forge a token that resets any account. Generate one with
 `openssl rand -base64 48` and pass it at deploy time:
@@ -147,7 +147,7 @@ Cognito's native `ConfirmForgotPassword` needs the new password at the same time
 but the `auth-client` contract splits "verify code" and "set new password" into two separate
 calls (`verify-reset-otp` then `reset-password`). Bridged by calling `ConfirmForgotPassword`
 with a throwaway random password inside `verify_reset_otp.js` (spends the code, proves it was
-correct), returning a signed short-lived `resetToken` (`lib/resetToken.js`, HMAC-SHA256 over
+correct), returning a signed short-lived `resetToken` (`lib/reset_token.js`, HMAC-SHA256 over
 `RESET_TOKEN_SECRET`), then `reset_password.js` uses `AdminSetUserPassword` with the real new
 password when called with that token.
 

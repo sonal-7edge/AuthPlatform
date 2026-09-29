@@ -36,7 +36,7 @@ describe('POST /auth/tokens', () => {
     it('401s with no Authorization header, without reaching Cognito', async () => {
         const cognito = { refreshTokens: jest.fn() }
         // The real verifier is what rejects a missing header, so let it.
-        const { verifyIdToken: real } = require('../../../lib/verifyIdToken')
+        const { verifyIdToken: real } = require('../../../lib/verify_id_token')
 
         const result = await handler(event({ authorization: null }), { verifyIdToken: real, cognito })
 

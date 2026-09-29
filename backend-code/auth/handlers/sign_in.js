@@ -1,5 +1,5 @@
-const Cognito = require('../lib/Cognito')
-const { withErrorHandling } = require('../lib/handlerWrapper')
+const Cognito = require('../lib/cognito')
+const { withErrorHandling } = require('../lib/handler_wrapper')
 const { ok, badRequest, parseBody, resolveIdentifier, userFromIdToken } = require('../lib/helpers')
 
 /**
@@ -9,7 +9,7 @@ const { ok, badRequest, parseBody, resolveIdentifier, userFromIdToken } = requir
  * so there is no second step and nothing to carry between requests.
  *
  * An unconfirmed account raises UserNotConfirmedException, which
- * handlerWrapper maps to 400 "Account is not confirmed" — the client should
+ * handler_wrapper maps to 400 "Account is not confirmed" — the client should
  * send the user back through verify-otp.
  */
 module.exports.handler = withErrorHandling(async (event, deps = {}) => {

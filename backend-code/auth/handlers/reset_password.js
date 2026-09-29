@@ -1,7 +1,7 @@
-const Cognito = require('../lib/Cognito')
-const { withErrorHandling } = require('../lib/handlerWrapper')
+const Cognito = require('../lib/cognito')
+const { withErrorHandling } = require('../lib/handler_wrapper')
 const { ok, badRequest, unauthorized, parseBody } = require('../lib/helpers')
-const { verifyResetToken } = require('../lib/resetToken')
+const { verifyResetToken } = require('../lib/reset_token')
 
 /**
  * POST /auth/reset-password — { resetToken, newPassword } -> { message }

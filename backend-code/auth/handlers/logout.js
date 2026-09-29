@@ -1,6 +1,6 @@
-const Cognito = require('../lib/Cognito')
-const { verifyIdToken } = require('../lib/verifyIdToken')
-const { withErrorHandling } = require('../lib/handlerWrapper')
+const Cognito = require('../lib/cognito')
+const { verifyIdToken } = require('../lib/verify_id_token')
+const { withErrorHandling } = require('../lib/handler_wrapper')
 const { ok, getHeader } = require('../lib/helpers')
 
 /**

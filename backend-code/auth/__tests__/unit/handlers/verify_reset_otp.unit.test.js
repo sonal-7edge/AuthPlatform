@@ -1,9 +1,9 @@
-// resetToken.js signs with this at call time; set it before the handler
+// reset_token.js signs with this at call time; set it before the handler
 // pulls the module in.
 process.env.RESET_TOKEN_SECRET = 'test-reset-token-secret'
 
 const { handler } = require('../../../handlers/verify_reset_otp')
-const { verifyResetToken } = require('../../../lib/resetToken')
+const { verifyResetToken } = require('../../../lib/reset_token')
 
 const EMAIL = 'ada@example.com'
 const OTP = '123456'

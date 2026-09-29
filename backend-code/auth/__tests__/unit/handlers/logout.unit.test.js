@@ -32,7 +32,7 @@ describe('POST /auth/logout', () => {
     it('401s with no Authorization header, without revoking anything', async () => {
         const cognito = { globalSignOut: jest.fn() }
         // The real verifier is what rejects a missing header, so let it.
-        const { verifyIdToken: real } = require('../../../lib/verifyIdToken')
+        const { verifyIdToken: real } = require('../../../lib/verify_id_token')
 
         const result = await handler(event({ authorization: null }), { verifyIdToken: real, cognito })
 
@@ -42,7 +42,7 @@ describe('POST /auth/logout', () => {
 
     it('401s on an Authorization header that is not a Bearer token', async () => {
         const cognito = { globalSignOut: jest.fn() }
-        const { verifyIdToken: real } = require('../../../lib/verifyIdToken')
+        const { verifyIdToken: real } = require('../../../lib/verify_id_token')
 
         const result = await handler(event({ authorization: 'Basic dXNlcjpwYXNz' }), { verifyIdToken: real, cognito })
 

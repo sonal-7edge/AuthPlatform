@@ -1,8 +1,8 @@
 const crypto = require('crypto')
-const Cognito = require('../lib/Cognito')
-const { withErrorHandling } = require('../lib/handlerWrapper')
+const Cognito = require('../lib/cognito')
+const { withErrorHandling } = require('../lib/handler_wrapper')
 const { ok, badRequest, parseBody } = require('../lib/helpers')
-const { signResetToken } = require('../lib/resetToken')
+const { signResetToken } = require('../lib/reset_token')
 
 /**
  * Cognito's ConfirmForgotPassword call spends the code, but requires the

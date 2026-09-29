@@ -1,9 +1,9 @@
-// resetToken.js signs with this at call time; set it before the handler
+// reset_token.js signs with this at call time; set it before the handler
 // pulls the module in.
 process.env.RESET_TOKEN_SECRET = 'test-reset-token-secret'
 
 const { handler } = require('../../../handlers/reset_password')
-const { signResetToken } = require('../../../lib/resetToken')
+const { signResetToken } = require('../../../lib/reset_token')
 
 const EMAIL = 'ada@example.com'
 const NEW_PASSWORD = 'Ev3nBetterSecret!'

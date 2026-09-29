@@ -122,7 +122,7 @@ class Cognito {
      * to change a password or delete an account.
      *
      * Throws NotAuthorizedException on a wrong password, which
-     * handlerWrapper.js maps to 401. The tokens it mints are discarded.
+     * handler_wrapper.js maps to 401. The tokens it mints are discarded.
      */
     async adminVerifyPassword({ username, password }) {
         await this.signIn({ username, password })
