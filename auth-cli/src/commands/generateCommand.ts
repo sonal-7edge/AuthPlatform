@@ -76,7 +76,7 @@ export function writeCfnOutput(config: AuthConfig, outputPath: string): void {
   logger.success(`CloudFormation template written to: ${chalk.bold(outputPath)}`);
   logger.divider();
   logger.info(
-    `Deploy with: ${chalk.gray(`sam deploy --template-file ${path.basename(outputPath)} --stack-name ${config.poolName} --capabilities CAPABILITY_IAM --resolve-s3`)}`,
+    `Deploy with: ${chalk.gray(`sam deploy --template-file ${path.basename(outputPath)} --stack-name ${config.stackName ?? config.poolName} --capabilities CAPABILITY_IAM --resolve-s3`)}`,
   );
 }
 
