@@ -7,7 +7,12 @@ import inquirer from 'inquirer';
 import { logger } from '../utils/logger';
 import { requireAwsIdentity } from '../utils/awsIdentity';
 import { fileExists, readYaml, resolveOutputPath } from '../utils/fileUtils';
-import { cfnTemplateToAuthConfig, isCfnTemplate } from '../utils/cfnParser';
+import {
+  cfnTemplateToAuthConfig,
+  isCfnTemplate,
+  readTemplateStackName,
+  setTemplateStackName,
+} from '../utils/cfnParser';
 import { DEPLOY_ENVIRONMENTS, DeployEnvironment } from '../config/constants';
 import { filterYesNo, transformYesNo, validateYesNo } from '../prompts/yesNoQuestion';
 
@@ -18,15 +23,20 @@ export interface DeployOptions {
   environment?: string;
 }
 
-// Falls back to the template's own pool name (e.g. `qwert` from `UserPoolName: !Sub
-// 'qwert-${Environment}'`) so re-deploying a template you already generated doesn't force you to
-// retype the name it was created with — you can still override it with --stack-name.
-async function promptStackName(filePath: string): Promise<string> {
+// A template that was already deployed carries its stack name in Metadata.AuthCli.StackName, so
+// it's reused without asking. Otherwise prompt, defaulting to the template's own pool name
+// (e.g. `qwert` from `UserPoolName: !Sub 'qwert-${Environment}'`).
+async function resolveStackName(filePath: string): Promise<string> {
   let defaultName = path.basename(filePath, path.extname(filePath));
 
   try {
     const doc = readYaml(filePath);
     if (isCfnTemplate(doc)) {
+      const saved = readTemplateStackName(doc);
+      if (saved) {
+        logger.info(`Using stack name "${saved}" from the template's Metadata.`);
+        return saved;
+      }
       const { poolName } = cfnTemplateToAuthConfig(doc);
       if (poolName) defaultName = poolName;
     }
@@ -182,6 +192,26 @@ export async function ensureSamCli(): Promise<boolean> {
   return installSamCliStandalone();
 }
 
+// Writes the deployed stack name into the template so the next `auth deploy` offers it.
+// A convenience only — never fails a deploy that already succeeded.
+function recordStackName(filePath: string, stackName: string): void {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (readTemplateStackName(readYaml(filePath)) === stackName) return;
+
+    const updated = setTemplateStackName(content, stackName);
+    if (updated === null) {
+      logger.warn('Template has no `Metadata: AuthCli:` block, so the stack name was not saved.');
+      return;
+    }
+
+    fs.writeFileSync(filePath, updated, 'utf8');
+    logger.info(`Saved stack name "${stackName}" in the template's Metadata for next time.`);
+  } catch (err) {
+    logger.warn(`Could not save the stack name in the template: ${(err as Error).message}`);
+  }
+}
+
 export async function runDeploy(file: string, options: DeployOptions): Promise<void> {
   const filePath = path.isAbsolute(file) ? file : resolveOutputPath(file);
 
@@ -200,7 +230,7 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
     process.exit(1);
   }
 
-  const stackName = options.stackName ?? (await promptStackName(filePath));
+  const stackName = options.stackName ?? (await resolveStackName(filePath));
 
   if (!(await ensureSamCli())) {
     process.exit(1);
@@ -238,6 +268,8 @@ export async function runDeploy(file: string, options: DeployOptions): Promise<v
     logger.error('Deployment failed.');
     process.exit(result.status ?? 1);
   }
+
+  recordStackName(filePath, stackName);
 
   logger.divider();
   logger.success(`Stack "${stackName}" deployed successfully.`);

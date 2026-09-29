@@ -92,7 +92,7 @@ If the input file is an `auth-config.yaml`, it's updated and saved back to disk 
 
 ### `auth deploy <file>`
 
-Verifies your AWS credentials via STS first — using `--profile` if given, otherwise the shell's exported credentials/`AWS_PROFILE` — then deploys a generated `cognito-template.yaml` with `sam deploy`. Requires the AWS SAM CLI installed (auto-installed on Linux if missing). Always asks for the stack name interactively (defaulting to the template's pool name) — there's no flag to skip that prompt.
+Verifies your AWS credentials via STS first — using `--profile` if given, otherwise the shell's exported credentials/`AWS_PROFILE` — then deploys a generated `cognito-template.yaml` with `sam deploy`. Requires the AWS SAM CLI installed (auto-installed on Linux if missing). A successful deploy saves the stack name in the template itself as `Metadata.AuthCli.StackName`, and later deploys of that template use it without asking. On the first deploy (no `StackName` yet) it asks for the stack name, defaulting to the template's pool name. To deploy under a different name, edit or remove `StackName` in the template.
 
 ```bash
 auth deploy ./resources/auth/cognito-template.yaml

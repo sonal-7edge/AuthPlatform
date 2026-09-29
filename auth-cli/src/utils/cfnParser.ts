@@ -72,6 +72,7 @@ export function cfnTemplateToAuthConfig(doc: any): AuthConfig {
   const metadata = doc.Metadata?.AuthCli ?? {};
 
   const region = (metadata.Region ?? 'us-east-1') as AwsRegion;
+  const stackName = readTemplateStackName(doc);
 
   const poolNameSub: string = userPool.UserPoolName?.['Fn::Sub'] ?? '';
   const poolName = poolNameSub.replace(/-\$\{Environment\}$/, '');
@@ -170,5 +171,45 @@ export function cfnTemplateToAuthConfig(doc: any): AuthConfig {
     appClients,
     lambdaTriggers,
     customAttributes,
+    ...(stackName ? { stackName } : {}),
   };
+}
+
+// Stack name recorded by the last successful `auth deploy` (Metadata.AuthCli.StackName).
+export function readTemplateStackName(doc: unknown): string | undefined {
+  const value = (doc as { Metadata?: { AuthCli?: { StackName?: unknown } } } | null)?.Metadata
+    ?.AuthCli?.StackName;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+// Records the stack name in the template's `Metadata: AuthCli:` block with a line edit rather
+// than a YAML round-trip, so hand edits, comments and CFN tags elsewhere in the file are kept.
+// Returns null if the template has no AuthCli block to put it in.
+export function setTemplateStackName(content: string, stackName: string): string | null {
+  const lines = content.split('\n');
+
+  let authCliIdx = -1;
+  let section = '';
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\S/.test(lines[i])) section = lines[i].trim();
+    if (section === 'Metadata:' && /^ {2}AuthCli:\s*$/.test(lines[i])) {
+      authCliIdx = i;
+      break;
+    }
+  }
+  if (authCliIdx === -1) return null;
+
+  let end = authCliIdx + 1;
+  while (end < lines.length && /^ {4,}\S/.test(lines[end])) end++;
+
+  // Quoted so names like `true` or `null` stay strings when read back.
+  const entry = `    StackName: '${stackName}'`;
+  const existing = lines
+    .slice(authCliIdx + 1, end)
+    .findIndex((line) => /^ {4}StackName:/.test(line));
+
+  if (existing === -1) lines.splice(end, 0, entry);
+  else lines[authCliIdx + 1 + existing] = entry;
+
+  return lines.join('\n');
 }
