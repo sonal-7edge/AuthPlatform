@@ -33,6 +33,7 @@ export function generateCfnTemplate(config: AuthConfig): string {
     emailVerification,
     deletionProtection,
     customAttributes,
+    stackName,
   } = config;
 
   const aliasAttrs: string[] = [];
@@ -129,7 +130,7 @@ Description: >
 Metadata:
   AuthCli:
     Provider: ${provider}
-    Region: ${region}
+    Region: ${region}${stackName ? `\n    StackName: '${stackName}'` : ''}
 
 Parameters:
   Environment:
