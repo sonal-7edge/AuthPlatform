@@ -1,0 +1,123 @@
+name: Docs Update
+
+# When a PR is merged into main, Claude analyzes the merged diff and:
+#   1. Adds a CHANGELOG.md entry and bumps the root package.json version (semver,
+#      derived from conventional-commit type: feat → minor, fix/chore → patch,
+#      BREAKING CHANGE/! → major).
+#   2. Updates the docs in documentation-application/docs/ (including the
+#      integration guide) if the merged change affects behaviour, APIs, config,
+#      or setup steps.
+#   3. Opens a docs PR with the result for a quick human review.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  update-docs:
+    # Only run for merged PRs (not closed-without-merge), and never for the
+    # docs PRs this workflow creates itself.
+    if: |
+      github.event.pull_request.merged == true &&
+      !startsWith(github.event.pull_request.head.ref, 'docs/auto-update-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Collect PR context
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          {
+            echo "PR #${PR_NUMBER}: ${PR_TITLE}"
+            echo ""
+            echo "--- PR body ---"
+            gh pr view "$PR_NUMBER" --json body -q .body
+            echo ""
+            echo "--- Commits ---"
+            gh pr view "$PR_NUMBER" --json commits -q '.commits[].messageHeadline'
+            echo ""
+            echo "--- Changed files ---"
+            gh pr view "$PR_NUMBER" --json files -q '.files[].path'
+          } > /tmp/pr-context.txt
+          gh pr diff "$PR_NUMBER" > /tmp/pr-diff.patch || true
+
+      - name: Update documentation with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            A pull request was just merged into main. Your job is to keep the
+            project documentation and version in sync with it.
+
+            PR context is in /tmp/pr-context.txt and the full diff is in
+            /tmp/pr-diff.patch. Read both first.
+
+            Then do the following, editing files in the current checkout:
+
+            1. VERSION BUMP — read the current version from the root
+               package.json. Decide the semver bump from the PR's
+               conventional-commit type(s):
+                 - any "BREAKING CHANGE" or "type!" → major
+                 - any "feat" → minor
+                 - otherwise (fix, chore, docs, refactor, ...) → patch
+               Update the "version" field in the root package.json.
+
+            2. CHANGELOG — add a new section to CHANGELOG.md, directly under
+               "## [Unreleased]", titled "## [<new version>] - <today's date>"
+               with Added / Changed / Fixed subsections as appropriate.
+               Describe WHAT changed for a reader of the product, not the raw
+               commit messages. Keep existing entries untouched.
+
+            3. DOCS — review the markdown files in
+               documentation-application/docs/ (integration-guide.md,
+               sts-assumerole-integration.md, and any others). If the merged
+               change adds/renames/removes endpoints, env vars, wizard steps,
+               generated CloudFormation resources, setup steps, ports, or
+               commands, update the affected sections so the docs match the
+               code. If the change introduces a wholly new user-facing feature
+               area with no matching doc, create a new markdown file for it in
+               documentation-application/docs/ and link it from
+               integration-guide.md. If nothing user-facing changed, leave the
+               docs alone — do not invent changes.
+
+            Do NOT modify source code, workflows, or lockfiles. Do NOT run git
+            commit or git push — a later workflow step handles that.
+          claude_args: |
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(cat:*),Bash(ls:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(date:*)"
+            --max-turns 60
+
+      - name: Open docs PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git add -A CHANGELOG.md package.json documentation-application/docs
+          if git diff --cached --quiet; then
+            echo "No documentation changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION=$(node -p "require('./package.json').version")
+          BRANCH="docs/auto-update-pr-${PR_NUMBER}"
+          git checkout -b "$BRANCH"
+          git commit -m "docs: update changelog and docs for PR #${PR_NUMBER} (v${VERSION})"
+          git push origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "docs: v${VERSION} — documentation update for PR #${PR_NUMBER}" \
+            --body "Automated documentation/changelog/version update generated after merging #${PR_NUMBER}. Review and merge."
