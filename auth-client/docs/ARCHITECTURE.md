@@ -7,6 +7,22 @@ single file, and how to change things without breaking consumers.
 If you are *using* the library, read [INTEGRATION.md](./INTEGRATION.md) instead.
 For a plain-language folder map, see [../STRUCTURE.md](../STRUCTURE.md).
 
+**What this package is for.** It exists so that no project in the organisation
+has to re-implement token refresh, cross-tab session sync, or the seven auth
+screens. Two consequences shape every design decision below, and both are worth
+holding onto when you change something:
+
+- **Consumers own the UI, the library owns the engine.** Screens are ejected
+  into the host project as editable files, generated from `src/ui/` so they
+  cannot drift. The library's real product is the token lifecycle — everything
+  in `src/core/`. If a change makes the screens harder to replace, it is
+  probably the wrong change.
+- **Correctness under concurrency is the thing being sold.** The single-flight
+  lock, the atomic token bundle and the 401-replay cap are not optimisations;
+  they are the reason to depend on this instead of fifty lines of `fetch`.
+  Breaking one silently reintroduces the exact bugs the package was written to
+  remove, which is why each has a regression test.
+
 - [Design principles](#design-principles)
 - [The layer cake](#the-layer-cake)
 - [Module map](#module-map)

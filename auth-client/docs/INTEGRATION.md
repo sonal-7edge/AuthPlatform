@@ -49,6 +49,28 @@ It does **not** issue or validate tokens, and it has no offline or mock mode.
 A reachable API implementing the [backend contract](#backend-contract) is
 required — there is nothing to demo against without one.
 
+### Why it exists
+
+The seven screens are the visible part, and the easy part. The reason to use
+this rather than write your own is the token plumbing underneath, which is
+where hand-rolled auth usually goes wrong:
+
+| Problem | What happens without it | What the library does |
+|---|---|---|
+| A token expires mid-session | A request 401s and the user is bounced to login | Refreshes ~30s *before* expiry, so requests go out valid |
+| Ten requests fire at once on an expired token | Ten parallel refreshes; nine present an already-rotated token, fail, and force a logout on a healthy session | A single-flight lock — all ten wait on one refresh |
+| A token is revoked server-side | The request fails and stays failed | One refresh-and-replay, capped so it can't loop |
+| The user signs out in another tab | The other tabs still think they are signed in | A cross-tab channel; every tab clears together |
+| The page is reloaded | A flash of the login screen before state rehydrates | State is read from storage synchronously on the first render |
+
+Each is a few lines to get roughly right and a long afternoon to get right under
+concurrency. Solving them once, in a package with tests against a real HTTP
+server, is the point.
+
+The screens are scaffolded into your project as files you own, so adopting this
+does not mean accepting its design decisions — delete them and keep the engine
+if you only want the token handling ([Path B](#path-b--your-own-screens-our-hook)).
+
 ---
 
 ## Before you start

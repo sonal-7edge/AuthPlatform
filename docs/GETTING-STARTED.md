@@ -3,6 +3,41 @@
 The platform is three installable pieces. This guide runs all three in order,
 from an empty folder to a React app with working sign-up and sign-in.
 
+## Why this exists
+
+Every new project used to rebuild the same authentication stack by hand, and
+each one came out slightly different:
+
+- **Cognito was provisioned by hand** — clicked through the console, or a
+  CloudFormation template copied from the last project and edited. Settings that
+  cannot be changed after creation (sign-in attributes) got chosen casually, and
+  settings that matter (auth flows, token lifetimes, deletion protection) drifted
+  between environments. Nobody could say what a given pool was configured with
+  without going to look.
+- **The auth API was rewritten each time** — signup, OTP confirmation, signin,
+  refresh, forgot/reset password, change password, delete account. The same
+  twelve endpoints, re-implemented against the Cognito SDK, each with its own
+  bugs around token refresh and error handling.
+- **The frontend was rebuilt each time** — seven screens, plus the genuinely
+  hard parts underneath: refreshing a token before it expires, making sure ten
+  concurrent requests trigger one refresh instead of ten, replaying a request
+  after a 401, and keeping browser tabs in agreement about who is signed in.
+  Those are easy to get subtly wrong and expensive to debug.
+
+The three packages replace each of those with something standard:
+
+| Instead of | You get |
+|---|---|
+| Hand-written CloudFormation, or console clicking | A wizard that asks the questions, validates the answers, and emits a deployable template |
+| Re-implementing twelve Cognito endpoints | Lambda handlers you install and deploy |
+| Rebuilding screens and token plumbing | Screens scaffolded into your project as editable files, with the refresh logic already solved |
+
+What you keep: the screens and the handlers land in **your** repository as
+ordinary files you own and edit. This is scaffolding, not a framework you are
+locked into — an upgrade will not overwrite your changes, and there is no
+runtime dependency on a shared service.
+
+
 | # | Piece | Package | What it gives you |
 |---|---|---|---|
 | 1 | **CLI** | `@akhileshb/auth-cli` | Provisions the Cognito User Pool + app client |
@@ -25,6 +60,7 @@ from an empty folder to a React app with working sign-up and sign-in.
 > every sign-in, which this backend does not do — pairing them leaves users
 > stranded on the OTP screen. See [sign-in has no OTP](#sign-in-has-no-otp).
 
+- [Why this exists](#why-this-exists)
 - [Prerequisites](#prerequisites)
 - [Step 1 — provision Cognito](#step-1--provision-cognito)
 - [Step 2 — deploy the auth API](#step-2--deploy-the-auth-api)
