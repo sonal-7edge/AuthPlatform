@@ -31,7 +31,6 @@ from an empty folder to a React app with working sign-up and sign-in.
 - [Step 3 — frontend](#step-3--frontend)
 - [Sign-in has no OTP](#sign-in-has-no-otp)
 - [End-to-end test](#end-to-end-test)
-- [Wizard answers explained](#wizard-answers-explained)
 - [Troubleshooting](#troubleshooting)
 - [Teardown](#teardown)
 
@@ -41,7 +40,7 @@ from an empty folder to a React app with working sign-up and sign-in.
 
 | Tool | Version | Check |
 |---|---|---|
-| Node | 18+ (20+ recommended) | `node -v` |
+| Node | 20+ | `node -v` |
 | AWS CLI | v2 | `aws --version` |
 | SAM CLI | any recent | `sam --version` |
 | AWS credentials | with Cognito + Lambda + API Gateway + IAM rights | `aws sts get-caller-identity` |
@@ -58,6 +57,13 @@ Session tokens expire, usually in an hour. When a deploy suddenly fails with
 `ExpiredToken`, re-export them — nothing is wrong with your stack.
 
 Never commit these. Keep them in your shell, a profile, or a secrets manager.
+
+### Placeholders in this guide
+
+Anything in `<angle-brackets>` is yours to fill in — `<your-app-name>`,
+`<your-stack-name>`, `<api-id>`. Commands are not copy-paste-ready until you
+replace them. Values without brackets (route paths, parameter names, defaults)
+are literal and should be typed as shown.
 
 ---
 
@@ -76,16 +82,118 @@ Run the wizard from your project root:
 auth generate
 ```
 
-It asks about region, pool name, sign-in attributes, password policy, MFA and
-app clients, then writes a CloudFormation template to
-`resources/auth/cognito-template.yaml`. See
-[wizard answers explained](#wizard-answers-explained) for the choices that are
-irreversible or that the backend depends on.
+It writes a CloudFormation template to
+`resources/auth/cognito-template.yaml`, then offers to deploy it.
 
-At the end it offers to deploy. Say yes, or do it yourself:
+### How to answer the prompts
+
+The wizard uses four kinds of prompt, and they are driven differently:
+
+| Prompt style | How it looks | How to answer |
+|---|---|---|
+| **Single choice** (list) | `❯ ` marks the current row | **↑/↓** to move, **Enter** to pick. One answer only. |
+| **Multi-select** (checkbox) | `◯` unchecked, `◉` checked | **↑/↓** to move, **Space** to toggle, **Enter** to submit. Pick more than one. |
+| **Yes / no** | `(y/n)` | Type `y` or `n`, then **Enter**. There is no default — it re-asks until you answer. |
+| **Text / number** | shows `(default)` | **Enter** accepts the default; type to override. |
+
+Pressing **Enter** on a multi-select without toggling anything submits whatever
+is pre-checked — which for *sign-in options* is `email`, and for *auth flows* is
+`SRP Auth`.
+
+### Every step, in order
+
+**1. Cloud Provider** — single choice. Only `Amazon Web Services (Cognito)` is
+selectable; Azure and GCP are listed but disabled (`coming soon`).
+
+**2. AWS Region** — single choice from 17 regions, shown as
+`Asia Pacific (Mumbai) (ap-south-1)`. Defaults to `us-east-1`. This is where the
+pool is created; it must match where you deploy the backend.
+
+**3. User Pool Name** — text. Letters, numbers, `_` and `-` only. The generated
+template appends the stage, so `demo1` becomes `demo1-dev`.
+
+**4. Allow self-registration?** — y/n. `n` means only an admin can create
+accounts, and `/auth/signup` will fail. Say **`y`** unless you want admin-only
+provisioning.
+
+**5. Auto-verify email addresses?** — y/n. **Say `y`.** With `n`, Cognito sends
+**no verification code at all**, and the sign-up flow cannot complete.
+
+**6. Enable deletion protection?** — y/n. `y` for prod. `n` for a dev stack you
+intend to tear down, or you must disable it by hand before the stack will delete.
+
+**7. How will users sign in?** — **multi-select** (Space to toggle). Options:
+email, phone (SMS OTP), username. Default `email`. At least one is required.
+
+> **This cannot be changed after the pool is created.** Changing your mind means
+> deleting the pool and every user in it. The frontend screens offer email and
+> phone, so select what you will actually use.
+
+**8. Password policy** — six prompts: minimum length (6–20, default 8), then
+four y/n toggles for uppercase, lowercase, numbers and special characters, then
+temporary password validity (1–365 days, default 7).
+
+**9. MFA Enforcement** — single choice: `Disabled`, `Optional`, `Required`.
+If you pick anything other than Disabled, it then asks for **one** MFA method
+(Authenticator App (TOTP) or SMS) — a single choice, not a multi-select.
+
+> **Leave this `Disabled`.** The backend implements no MFA challenge; with
+> `Required`, sign-in returns "Additional verification required" and stops.
+
+**10. Add custom user attributes?** — y/n. `y` loops: attribute name (max 20
+chars), type (String / Number / Boolean / DateTime), mutable y/n, then min/max
+constraints for String and Number. Asks "Add another?" after each. Custom
+attributes are always optional — Cognito rejects required ones.
+
+**11. App Clients** — repeats until you decline "Add another app client?":
+
+| Prompt | Default | Notes |
+|---|---|---|
+| Client name | `web-client` | letters, numbers, `_`, `-` |
+| Auth flows | `SRP Auth` | **multi-select**; Refresh Token is always added for you |
+| Access token validity | 60 min | 5–1440 |
+| ID token validity | 60 min | 5–1440 |
+| Refresh token validity | 30 days | 1–3650 |
+| Callback URL | — | up to 5; **Enter on an empty line stops** |
+| Logout URL | — | same |
+
+> **Select `Admin Password Auth`** in the auth-flows multi-select. The backend
+> signs in with `ADMIN_USER_PASSWORD_AUTH`; without it, sign-in fails with
+> `Auth flow not enabled for this client`. Use **Space** to add it alongside SRP.
+
+> **Keep the token validity defaults.** auth-client refreshes 30s before expiry,
+> so a very short token is born inside the skew window and every request
+> triggers a refresh.
+
+**12. Lambda triggers** — ten optional ARN prompts (Pre Sign-up, Post
+Confirmation, Pre Authentication, …). **Press Enter through all ten.** This
+backend needs none.
+
+**13. Deploy now?** — y/n. Saying `y` asks for a stack name (defaults to the
+pool name) and a deploy stage (`dev`, `qa`, `pre-prod`, `prod`), then runs
+`sam deploy`. Saying `n` leaves you the template to deploy yourself:
 
 ```bash
-auth deploy resources/auth/cognito-template.yaml --stack-name my-auth
+auth deploy resources/auth/cognito-template.yaml --stack-name <your-stack-name>
+```
+
+### A note on client secrets
+
+The wizard does **not** ask whether to generate a client secret — it always
+generates one, and exports it as the `CognitoClientSecret` stack output. That
+matters because `/auth/refresh` cannot compute Cognito's `SECRET_HASH` (it
+receives only `{refreshToken}`, with no username), so **token refresh will fail
+on a client that has a secret**.
+
+Until the CLI exposes the choice, either accept that refresh is broken for that
+client, extend the handler to carry the identifier, or create a secret-less app
+client by hand:
+
+```bash
+aws cognito-idp create-user-pool-client \
+  --user-pool-id <UserPoolId> --client-name spa-client \
+  --no-generate-secret \
+  --explicit-auth-flows ALLOW_ADMIN_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH
 ```
 
 Other commands:
@@ -99,10 +207,10 @@ auth deploy <file> --profile prod --region ap-south-1
 
 ### Collect the outputs
 
-You need three values for step 2:
+You need four values for step 2:
 
 ```bash
-aws cloudformation describe-stacks --stack-name my-auth \
+aws cloudformation describe-stacks --stack-name <your-stack-name> \
   --query 'Stacks[0].Outputs' --output table
 ```
 
@@ -110,16 +218,13 @@ aws cloudformation describe-stacks --stack-name my-auth \
 |---|---|
 | `UserPoolId` | `CognitoUserPoolId` |
 | `UserPoolArn` | `CognitoUserPoolArn` |
-| `AppClient<Name>Id` | `CognitoUserPoolClientId` |
+| `CognitoUserPoolClientId` | `CognitoUserPoolClientId` |
+| `CognitoClientSecret` | `CognitoClientSecret` |
 
-If you generated a client secret, fetch it separately — it is never a stack
-output:
-
-```bash
-aws cognito-idp describe-user-pool-client \
-  --user-pool-id <UserPoolId> --client-id <ClientId> \
-  --query 'UserPoolClient.ClientSecret' --output text
-```
+With a single app client the outputs are named exactly as the backend's
+parameters expect, so they copy across directly. With more than one client they
+are prefixed per client (`<ClientName>Id`, `<ClientName>Secret`) and you pick
+the pair you want the backend to use.
 
 ---
 
@@ -140,7 +245,7 @@ default on purpose — it signs the short-lived password-reset token, and a
 shared default would let anyone forge a reset for any account:
 
 ```bash
-export ProjectName="my-app"
+export ProjectName="<your-project-name>"      # e.g. acme-portal
 export Environment="dev"
 export ApiStageName="v1"
 export CognitoUserPoolId="ap-south-1_xxxxxxxxx"
@@ -176,15 +281,15 @@ The deploy validates, builds, shows you the resource diff and waits for `y`.
 Take the API URL from the outputs:
 
 ```bash
-aws cloudformation describe-stacks --stack-name my-app-dev-auth \
+aws cloudformation describe-stacks --stack-name <your-project-name>-dev-auth \
   --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' --output text
-# https://abc123.execute-api.ap-south-1.amazonaws.com/v1
+# https://<api-id>.execute-api.<region>.amazonaws.com/v1
 ```
 
 ### Smoke-test it
 
 ```bash
-API="https://abc123.execute-api.ap-south-1.amazonaws.com/v1"
+API="<paste the ApiUrl output from above>"
 
 curl -s -X POST "$API/auth/signup" -H 'content-type: application/json' \
   -d '{"firstName":"Jane","lastName":"Doe","email":"jane@example.com","password":"Passw0rd!"}'
@@ -207,8 +312,8 @@ through a React form is much harder than through curl.
 ## Step 3 — frontend
 
 ```bash
-npm create vite@latest my-app -- --template react
-cd my-app
+npm create vite@latest <your-app-name> -- --template react
+cd <your-app-name>
 npm install
 
 npm install github:Nishan666/auth-client
@@ -297,12 +402,9 @@ your `Authorization` headers — which is what auth-client sends anyway.
 
 **`/auth/refresh` and client secrets.** That route receives only
 `{refreshToken}` with no username, so it cannot compute Cognito's
-`SECRET_HASH`. It works when the app client has **no** secret. If yours does,
-either generate the client without a secret (the normal choice for a
-browser-facing SPA) or extend the handler to carry the identifier through.
-
-This is the single strongest reason to answer **No** to "Generate client
-secret?" in the wizard for any SPA or mobile client.
+`SECRET_HASH`. It works only when the app client has **no** secret — and the
+wizard always generates one. See
+[a note on client secrets](#a-note-on-client-secrets) for the workarounds.
 
 ---
 
@@ -318,23 +420,6 @@ secret?" in the wizard for any SPA or mobile client.
 
 If step 4 leaves you on an OTP screen, you are on auth-client 0.2.0 — see
 [sign-in has no OTP](#sign-in-has-no-otp).
-
----
-
-## Wizard answers explained
-
-The ones that matter, and why.
-
-| Question | Guidance |
-|---|---|
-| **How will users sign in?** | **Cannot be changed after the pool is created.** Getting this wrong means deleting the pool and every user in it. |
-| **Auto-verify email addresses?** | Say **Yes** if you want the sign-up flow to work. With this off, Cognito sends **no verification code at all** and `verify-otp` has nothing to confirm. |
-| **Generate client secret?** | **No** for SPAs and mobile. A browser cannot keep a secret, and `/auth/refresh` cannot handle one (see above). Yes only for a server-side client. |
-| **Auth flows** | The backend needs `ALLOW_ADMIN_USER_PASSWORD_AUTH` and `ALLOW_REFRESH_TOKEN_AUTH`. Without the first, sign-in fails with `Auth flow not enabled for this client`. |
-| **Deletion protection** | **Yes** for prod. **No** for a dev stack you intend to tear down — otherwise you must disable it by hand before the stack will delete. |
-| **Token validity** | The 1-minute values in a quick demo make every request refresh. auth-client refreshes 30s before expiry, so a 1-minute token is born nearly inside the skew window. Use **60 minutes** for id/access tokens and **30 days** for refresh. |
-| **MFA** | The backend implements no MFA challenge. If you enable it as *required*, sign-in returns "Additional verification required" and stops. Leave it **Off** unless you are extending the handlers. |
-| **Lambda triggers** | Leave all blank. This backend needs none. |
 
 ---
 
@@ -404,10 +489,10 @@ Delete in reverse order — the API stack references the pool:
 
 ```bash
 # 1. the API
-cd <npm root> && npm run destroy      # or: sam delete --stack-name my-app-dev-auth
+cd <npm root> && npm run destroy      # or: sam delete --stack-name <your-project-name>-dev-auth
 
 # 2. the Cognito stack
-aws cloudformation delete-stack --stack-name my-auth
+aws cloudformation delete-stack --stack-name <your-stack-name>
 ```
 
 If deletion protection is on, the pool stack will refuse to delete. Turn it off
