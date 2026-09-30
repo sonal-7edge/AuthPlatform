@@ -30,18 +30,46 @@ cp /path/to/AuthPlatform/.claude/commands/*.md ~/.claude/commands/
 
 Project commands win over user commands when both define the same name.
 
-## They read the docs, they do not replace them
+## Where the commands get their facts
 
-Both commands instruct Claude to read `docs/GETTING-STARTED.md` and
-`auth-client/docs/INTEGRATION.md` before acting, rather than relying on what the
-model remembers about the package. That is deliberate: the install command, the
-sign-in flow and the version pairing have all changed at least once, and a
-command that hardcoded them would quietly go stale.
+**They do not need this repo checked out.** A project that copies `add-auth.md`
+will not have `docs/` locally, so the commands fetch the guides over HTTP from
+the public repo instead:
 
-The practical consequence: **AuthPlatform needs to be reachable from wherever
-the command runs.** If you copy `add-auth.md` into a project that does not sit
-alongside this repo, the command tells Claude to ask you where the docs are
-instead of guessing. Point it at a checkout, or paste the relevant guide.
+```
+https://raw.githubusercontent.com/sonal-7edge/AuthPlatform/<branch>/docs/GETTING-STARTED.md
+https://raw.githubusercontent.com/sonal-7edge/AuthPlatform/<branch>/auth-client/docs/INTEGRATION.md
+```
+
+The commands currently hardcode
+`feature/CNE-440-publish-and-validate-deployment-and-integration-documentation`,
+since that is the only ref serving these files today — `main` 404s. **When that
+branch merges, change the branch segment to `main` in both command files.** It
+is the one piece of maintenance these commands need.
+
+That fetch is a convenience, not a dependency. Each command is self-contained
+for the steps it performs, and also defers to documentation that **ships inside
+the installed packages**:
+
+| Source | Available |
+|---|---|
+| `node_modules/@7edge/auth-client/README.md` | after the frontend install — full API, screens, theming, troubleshooting |
+| `src/auth/NEXT-STEPS.txt` | after the frontend install — what is still outstanding |
+| `node_modules/@gprasad/auth-backend/README.md` + `docs/api-infrastructure.md` | after the backend install — routes, Cognito requirements, the SAM template |
+| `auth --help`, `auth <cmd> --help` | after the CLI install |
+
+That is why `auth-client`'s `package.json` ships `README.md` in its `files`
+allowlist even though `docs/` is excluded: the README is the copy that reaches
+consumers, so it has to stand alone.
+
+The repo's longer guides (`docs/GETTING-STARTED.md`,
+`auth-client/docs/INTEGRATION.md`) are richer, and the commands use them **when
+they happen to be present** — but never block on them.
+
+The one thing a command cannot defer is what to do *before* the install, since
+no package docs exist yet. So `add-auth.md` carries the install command, the
+`.env` handling and a hand-wiring fallback inline. Those are the parts to check
+when something changes.
 
 ## Keeping them current
 

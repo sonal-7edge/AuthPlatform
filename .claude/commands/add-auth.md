@@ -1,7 +1,7 @@
 ---
 description: Add AuthPlatform authentication (@7edge/auth-client) to this application
 argument-hint: "[api-base-url]"
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(npm install*), Bash(npm ls*), Bash(npx auth-client*), Bash(node -v), Bash(cat*), Bash(ls*), Bash(rm -f src/App.css src/index.css)
+allowed-tools: Read, Glob, Grep, Edit, Write, WebFetch, Bash(npm install*), Bash(npm ls*), Bash(npx auth-client*), Bash(node -v), Bash(cat*), Bash(ls*), Bash(rm -f src/App.css src/index.css)
 ---
 
 Wire AuthPlatform authentication into the application in the current working
@@ -11,15 +11,46 @@ API base URL, if the user supplied one: $1
 
 ## Reference documentation
 
-Read these before acting. They are the source of truth — prefer them over
-anything you remember about this package:
+Read the docs before acting — prefer them over anything you remember about this
+package, which changes often.
 
-- `AuthPlatform/docs/GETTING-STARTED.md` — the whole platform, all three pieces
-- `AuthPlatform/auth-client/docs/INTEGRATION.md` — the frontend in detail
+**After installing, the package ships its own full documentation into this
+project.** That is the primary source and it is always present:
 
-If those paths do not resolve, the AuthPlatform repo is not checked out
-alongside this project. Ask the user where it is, or for the published docs,
-before continuing — **do not proceed from memory.**
+```
+node_modules/@7edge/auth-client/README.md
+```
+
+It covers the setup commands, the API surface, the screens, theming, the
+backend contract and troubleshooting. Read it once the install step is done.
+
+`src/auth/NEXT-STEPS.txt` also appears after install and lists exactly what is
+still outstanding for this project.
+
+The longer-form guides live in the public AuthPlatform repo. Fetch the frontend
+one before you start — it is the most complete reference and covers cases this
+command does not:
+
+```
+https://raw.githubusercontent.com/sonal-7edge/AuthPlatform/feature/CNE-440-publish-and-validate-deployment-and-integration-documentation/auth-client/docs/INTEGRATION.md
+```
+
+The whole-platform guide, if you need steps 1–2 context:
+
+```
+https://raw.githubusercontent.com/sonal-7edge/AuthPlatform/feature/CNE-440-publish-and-validate-deployment-and-integration-documentation/docs/GETTING-STARTED.md
+```
+
+Those point at the `feature/CNE-440-…` branch because that is where the docs
+live today. **Once it merges, swap the branch segment for `main`** — shorter and
+stable. If a URL 404s, try `main`; the merge has probably happened.
+
+If the fetch fails for any other reason (no network, WebFetch unavailable),
+**carry on without it** — the procedure below is self-contained, and the shipped
+README covers the rest once step 2 finishes.
+
+Prefer a local checkout if the repo happens to sit nearby: it is faster and
+reflects uncommitted work.
 
 ## What you are doing
 
@@ -89,6 +120,60 @@ generated files import `@7edge/auth-client/style.css` and `src/auth/home.css`
 instead. Remove them only if nothing else imports them (check first).
 
 Delete `src/auth/NEXT-STEPS.txt` once setup is complete.
+
+### Fallback — wiring by hand
+
+If `npx auth-client setup` cannot prompt (non-interactive shell, CI), or the
+user declines the wiring step, write these two files yourself. This is what
+`setup` would have produced:
+
+```jsx
+// src/main.jsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import '@7edge/auth-client/style.css'   // once, at the app root
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode><App /></StrictMode>
+)
+```
+
+```jsx
+// src/App.jsx
+import { AuthProvider, useAuth, AuthFlow, authConfig } from './auth'
+
+function Dashboard() {
+  const { user, logout } = useAuth()
+  return (
+    <div style={{ padding: 32, fontFamily: 'system-ui' }}>
+      <h1>Signed in as {user?.email}</h1>
+      <button onClick={logout}>Log out</button>
+    </div>
+  )
+}
+
+// Split out from App: a component cannot read a context its own parent renders.
+function Root() {
+  const { isAuthenticated } = useAuth()
+  return isAuthenticated ? <Dashboard /> : <AuthFlow />
+}
+
+export default function App() {
+  return (
+    <AuthProvider config={authConfig}>
+      <Root />
+    </AuthProvider>
+  )
+}
+```
+
+Back up anything you overwrite, and tell the user you wired it manually.
+
+`authConfig` comes from the package via the `./auth` barrel and reads
+`VITE_API_BASE_URL` — there is no config file to create. On a non-Vite bundler
+that variable does not exist, so build the config object yourself with the
+right env var (`REACT_APP_…`, `NEXT_PUBLIC_…`) and pass it to `AuthProvider`.
 
 ## Things that will bite you
 

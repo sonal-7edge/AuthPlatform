@@ -1,7 +1,7 @@
 ---
 description: Provision Cognito and deploy the auth API (AuthPlatform steps 1–2)
 argument-hint: "[stack-name]"
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(auth *), Bash(npm install -g*), Bash(npm run*), Bash(aws cloudformation*), Bash(aws cognito-idp*), Bash(aws sts*), Bash(sam --version), Bash(openssl rand*), Bash(curl*), Bash(node -v), Bash(ls*), Bash(cat*)
+allowed-tools: Read, Glob, Grep, Edit, Write, WebFetch, Bash(auth *), Bash(npm install -g*), Bash(npm run*), Bash(aws cloudformation*), Bash(aws cognito-idp*), Bash(aws sts*), Bash(sam --version), Bash(openssl rand*), Bash(curl*), Bash(node -v), Bash(ls*), Bash(cat*)
 ---
 
 Provision the AWS Cognito user pool and deploy the auth API for this project —
@@ -9,9 +9,29 @@ AuthPlatform steps 1 and 2. Stack name, if supplied: $1
 
 ## Reference documentation
 
-Read `AuthPlatform/docs/GETTING-STARTED.md` first — steps 1 and 2, and the
-wizard walkthrough. It is the source of truth. If the path does not resolve,
-ask the user where the AuthPlatform repo is rather than guessing at CLI flags.
+Two sources are available without the AuthPlatform repo:
+
+- `auth --help`, and `auth <command> --help` — the CLI's own flags. Run these
+  rather than guessing at options.
+- `node_modules/@gprasad/auth-backend/README.md` and
+  `node_modules/@gprasad/auth-backend/docs/api-infrastructure.md` — both ship
+  with the backend package once step 2 installs it. Between them they document
+  every route, the required Cognito configuration, the environment variables
+  and the SAM template.
+
+The full walkthrough — including the wizard prompt-by-prompt — is in the public
+AuthPlatform repo. Fetch it before running the wizard:
+
+```
+https://raw.githubusercontent.com/sonal-7edge/AuthPlatform/feature/CNE-440-publish-and-validate-deployment-and-integration-documentation/docs/GETTING-STARTED.md
+```
+
+That points at the `feature/CNE-440-…` branch because that is where the docs
+live today. **Once it merges, swap the branch segment for `main`.** If the URL
+404s, try `main` — the merge has probably happened.
+
+Prefer a local checkout if one sits nearby. If the fetch fails for any other
+reason, **carry on without it** — this command is self-contained.
 
 ## Before touching AWS
 
