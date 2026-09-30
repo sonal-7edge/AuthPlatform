@@ -60,6 +60,11 @@ runtime dependency on a shared service.
 > every sign-in, which this backend does not do — pairing them leaves users
 > stranded on the OTP screen. See [sign-in has no OTP](#sign-in-has-no-otp).
 
+> **Using Claude Code?** `/add-auth` walks the frontend integration for you, and
+> `/provision-auth` covers steps 1–2. See
+> [.claude/commands/](../.claude/commands/README.md) for how to install them in
+> your own repo. They read this guide rather than replacing it.
+
 - [Why this exists](#why-this-exists)
 - [Prerequisites](#prerequisites)
 - [Step 1 — provision Cognito](#step-1--provision-cognito)
