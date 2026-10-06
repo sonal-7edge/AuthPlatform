@@ -7,6 +7,11 @@ const {
     AdminInitiateAuthCommand,
     AdminUserGlobalSignOutCommand,
     AdminGetUserCommand,
+    AdminConfirmSignUpCommand,
+    AdminSetUserPasswordCommand,
+    AdminDeleteUserCommand,
+    ForgotPasswordCommand,
+    ConfirmForgotPasswordCommand,
 } = require('@aws-sdk/client-cognito-identity-provider')
 
 const cognitoClient = new CognitoIdentityProviderClient({
@@ -107,6 +112,22 @@ class Cognito {
         return cognitoClient.send(command)
     }
 
+    /**
+     * Proves the caller knows `password`, without issuing a session.
+     *
+     * change_password.js and delete_account.js need this because the client
+     * only ever holds an idToken, never an accessToken, so Cognito's own
+     * ChangePassword / DeleteUser APIs are unusable here. Running the same
+     * password check sign-in uses means a stolen idToken alone is not enough
+     * to change a password or delete an account.
+     *
+     * Throws NotAuthorizedException on a wrong password, which
+     * handlerWrapper.js maps to 401. The tokens it mints are discarded.
+     */
+    async adminVerifyPassword({ username, password }) {
+        await this.signIn({ username, password })
+    }
+
     async adminGetUser(username) {
         const command = new AdminGetUserCommand({
             UserPoolId: this.user_pool_id,
@@ -137,6 +158,57 @@ class Cognito {
 
     async globalSignOut(username) {
         const command = new AdminUserGlobalSignOutCommand({
+            UserPoolId: this.user_pool_id,
+            Username: username,
+        })
+        return cognitoClient.send(command)
+    }
+
+    /**
+     * Kicks off Cognito's native ForgotPassword flow — sends a confirmation
+     * code via whatever delivery medium the pool has configured for this
+     * user. Unlike sign-in/sign-up, there's no password to verify first here,
+     * so this is the one flow that uses Cognito's own code delivery instead
+     * of the custom-auth OTP chain.
+     */
+    async forgotPassword(username) {
+        const command = new ForgotPasswordCommand({
+            ClientId: this.client_id,
+            Username: username,
+            SecretHash: this.secretHash(username),
+        })
+        return cognitoClient.send(command)
+    }
+
+    async confirmForgotPassword({ username, confirmation_code, password }) {
+        const command = new ConfirmForgotPasswordCommand({
+            ClientId: this.client_id,
+            Username: username,
+            ConfirmationCode: confirmation_code,
+            Password: password,
+            SecretHash: this.secretHash(username),
+        })
+        return cognitoClient.send(command)
+    }
+
+    /**
+     * Admin-side password set, bypassing the confirmation-code requirement —
+     * used by reset_password.js (once the code was already spent by
+     * confirmForgotPassword) and change_password.js (currentPassword already
+     * verified via adminVerifyPassword).
+     */
+    async adminSetUserPassword({ username, password, permanent = true }) {
+        const command = new AdminSetUserPasswordCommand({
+            UserPoolId: this.user_pool_id,
+            Username: username,
+            Password: password,
+            Permanent: permanent,
+        })
+        return cognitoClient.send(command)
+    }
+
+    async adminDeleteUser(username) {
+        const command = new AdminDeleteUserCommand({
             UserPoolId: this.user_pool_id,
             Username: username,
         })

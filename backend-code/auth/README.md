@@ -21,7 +21,15 @@ auth/
 | `/auth/signin` | `handlers/sign_in.js` | `{email\|phone,password}` | `{idToken,refreshToken,user}` |
 | `/auth/logout` | `handlers/logout.js` | `Authorization: Bearer <idToken>` | `{message}` |
 | `/auth/refresh` | `handlers/refresh_token.js` | `{refreshToken}` | `{idToken,refreshToken}` |
-| `/auth/tokens` | `handlers/tokens.js` | `{email}` | **501 — not implemented, see below** |
+| `/auth/resend-otp` | `handlers/resend-otp.js` | `{identifier}` | `{message}` |
+| `/auth/forgot-password` | `handlers/forgot_password.js` | `{email\|phone}` | `{message}` |
+| `/auth/verify-reset-otp` | `handlers/verify_reset_otp.js` | `{identifier,otp}` | `{resetToken}` |
+| `/auth/reset-password` | `handlers/reset_password.js` | `{resetToken,newPassword}` | `{message}` |
+| `/auth/change-password` | `handlers/change_password.js` | `Authorization: Bearer <idToken>`, `{currentPassword,newPassword}` | `{message}` |
+| `/auth/delete-account` | `handlers/delete_account.js` | `Authorization: Bearer <idToken>`, `{password}` | `{message}` |
+| `/auth/tokens` | `handlers/tokens.js` | `Authorization: Bearer <idToken>`, optional `{refreshToken}` | `{idToken,refreshToken?,user}` |
+
+Every route above is routed to the handler named in the table — there are no 501 stubs left.
 
 ⚠️ **This differs from the `auth-client` contract** (`auth-client/src/core/constants.js` on branch
 `CNE-444-...`), which expects `signin` to return `{message}` and `verify-otp` to return the tokens.
@@ -63,23 +71,35 @@ that email MFA needs the Essentials tier and, as far as I can tell, an SES confi
 
 This package assumes a User Pool + App Client already exist with:
 
-- Explicit auth flows: `ALLOW_ADMIN_USER_PASSWORD_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH`.
-- **`AutoVerifiedAttributes` must include `email`** (and/or `phone_number`). This is what makes
-  Cognito send a verification code on `SignUp`. Without it sign-up succeeds and no code is ever
-  sent, which looks exactly like a broken email setup.
-- No Lambda triggers. Nothing in this package needs wiring into the pool's `LambdaConfig`.
-- The IAM execution role is created by `template.yaml`; it needs no SES or SNS access, because
-  Cognito sends the messages.
-
-For **email**, the pool's default sender (`EmailSendingAccount: COGNITO_DEFAULT`) works with no
-setup, capped at 50 messages/day — fine for development, not for production. For **phone**, the pool
-needs its own SMS configuration (an SNS caller role), which the default sender does not cover.
+- Explicit auth flows: `ALLOW_ADMIN_USER_PASSWORD_AUTH` and `ALLOW_REFRESH_TOKEN_AUTH`. No
+  `ALLOW_CUSTOM_AUTH` — nothing here uses a challenge chain any more. A client missing
+  `ALLOW_ADMIN_USER_PASSWORD_AUTH` fails sign-in with
+  `InvalidParameterException: Auth flow not enabled for this client`.
+- **No Lambda triggers.** The pool needs none; `LambdaConfig` can be empty.
+- `email` and/or `phone_number` under `AutoVerifiedAttributes`, or `SignUp` succeeds and Cognito
+  sends no verification code at all.
+- IAM execution role for every handler in this package needs `cognito-idp:AdminInitiateAuth`,
+  `cognito-idp:AdminConfirmSignUp`, `cognito-idp:AdminUserGlobalSignOut`,
+  `cognito-idp:AdminGetUser`, `cognito-idp:AdminSetUserPassword`, `cognito-idp:AdminDeleteUser`
+  scoped to the pool. No SES or SNS grants: every message is composed and sent by Cognito
+  itself, never by this service.
 
 ## Environment variables
 
-`COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET` (optional),
-`CORS_ALLOW_ORIGIN`. `AWS_REGION` comes from the Lambda runtime. All of them are set once in `template.yaml` under `Globals.Function.Environment` and
-fed from stack parameters — see [docs/api-infrastructure.md](docs/api-infrastructure.md#8-environment-variables).
+See `.env.example`: `AWS_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`,
+`COGNITO_CLIENT_SECRET` (optional), `RESET_TOKEN_SECRET` (required — signs the forgot-password
+`resetToken`), `RESET_TOKEN_TTL_SECONDS`. Nothing configures OTP delivery or expiry: those are
+Cognito's, set on the user pool.
+
+Deployed, these come from `template.yaml` parameters. **`ResetTokenSecret` has no default and no
+empty fallback on purpose** — `lib/resetToken.js` passes it straight to `crypto.createHmac`, which
+throws `TypeError: The "key" argument must be of type string` on an unset value, and a shared
+default would let anyone forge a token that resets any account. Generate one with
+`openssl rand -base64 48` and pass it at deploy time:
+
+```bash
+sam deploy --parameter-overrides ResetTokenSecret="$(openssl rand -base64 48)"
+```
 
 ## Known limitation — `/auth/refresh` and app clients with a secret
 
@@ -89,24 +109,56 @@ Cognito's `SECRET_HASH` (which is keyed by username). This works as-is when the 
 app client does have a secret, extend the request to also carry the identifier and pass it
 through to `Cognito.refreshTokens(refreshToken, username)`.
 
-## `/auth/tokens` — unresolved contract gap
+## `/auth/tokens` — how it identifies the caller
 
-`auth-client`'s `fetchTokens()` calls this with only `{email}`, and no UI screen actually uses
-it (dead code in the current build). Minting tokens from an email alone with no proof of
-identity would be a security hole, so this handler always returns `501`. If this needs to do
-something real, the `auth-client` contract needs to change first (e.g. carry a refresh token
-or a signed session artifact) — flag with whoever owns CNE-444.
+`auth-client`'s `fetchTokens()` calls this, and adopting the tokens it returns is what flips
+`isAuthenticated` — which is what swaps a host app from `<AuthFlow />` to its home screen. The
+generated `SignIn` screen calls it straight after `signIn`, so a 501 here left a user with
+correct credentials stuck on the sign-in form.
 
-## Deferred to a follow-up pass
+**Identity comes from the Bearer idToken, never from the request body.** That distinction is why
+this handler used to be a deliberate 501: the older contract sent `{email}` and nothing else, and
+an email is not proof of anything — honouring it would have minted tokens for any account whose
+address you could guess.
 
-`resend-otp`, `forgot-password`, `verify-reset-otp`, `reset-password`, `change-password`,
-`delete-account` — all reuse `lib/Cognito.js` and `lib/verifyIdToken.js`. One design note for
-whoever picks these up: Cognito's native `ConfirmForgotPassword` needs the new password at the
-same time as the code, but the `auth-client` contract splits "verify code" and "set new
-password" into two separate calls. Bridge that by calling `ConfirmForgotPassword` with a
-throwaway random password at verify-time (spends the code), returning a signed short-lived
-`resetToken`, then using `AdminSetUserPassword` with the real new password when `reset-password`
-is called with that token.
+`auth-client` 0.2.0 closed that gap. Its HTTP backend sends an **empty body** (the identifier it
+resolves locally is passed only to the mock backend), and its request interceptor attaches the
+stored idToken to every call except `/auth/refresh` — see `dist` → `httpClient.js`. So the request
+now arrives with a Cognito-signed token to verify, and the route carries the `CognitoAuthorizer`
+on top of the handler's own `verifyIdToken`, the same belt-and-braces as `/auth/logout`.
+
+Two paths, both requiring a valid idToken first:
+
+- **`{refreshToken}` in the body** — mints a genuinely fresh pair off Cognito. The verified claims
+  supply the username here, so `SECRET_HASH` is computable and this works on an app client that
+  has a client secret — unlike `/auth/refresh` (see the limitation below).
+- **empty body** (what the client sends today) — returns the verified idToken with the profile
+  decoded from its claims. Nothing new is issued: with no password and no refresh token there is
+  nothing to mint from, and echoing a token the caller just presented and we verified grants no
+  access it didn't already have.
+
+`refreshToken` is left out of the response on that second path on purpose — the client's
+`saveTokens()` merges into the stored set, so omitting the key preserves the refresh token
+sign-in saved rather than clobbering it.
+
+## Forgot-password design note
+
+Cognito's native `ConfirmForgotPassword` needs the new password at the same time as the code,
+but the `auth-client` contract splits "verify code" and "set new password" into two separate
+calls (`verify-reset-otp` then `reset-password`). Bridged by calling `ConfirmForgotPassword`
+with a throwaway random password inside `verify_reset_otp.js` (spends the code, proves it was
+correct), returning a signed short-lived `resetToken` (`lib/resetToken.js`, HMAC-SHA256 over
+`RESET_TOKEN_SECRET`), then `reset_password.js` uses `AdminSetUserPassword` with the real new
+password when called with that token.
+
+`change_password.js` and `delete_account.js` re-verify the caller's current password via
+`AdminInitiateAuth(ADMIN_USER_PASSWORD_AUTH)` — the same check round 1 of sign-in uses — since
+the client only ever holds an idToken, never an accessToken, so Cognito's own
+`ChangePassword`/`DeleteUser` APIs (which take an access token) aren't usable here; both use the
+admin (`AdminSetUserPassword` / `AdminDeleteUser`) equivalents instead.
+
+`resend-otp.js` maps straight onto Cognito's `ResendConfirmationCode`, so it only applies to an
+account still UNCONFIRMED. Cognito invalidates the previous code when it sends the new one.
 
 ## Running locally
 
@@ -115,7 +167,8 @@ From `backend-code/`, not from here:
 ```bash
 cd backend-code
 npm install
-npm test    # jest, mocks CognitoIdentityProviderClient via aws-sdk-client-mock — no AWS account needed
+npm test    # jest — handlers take their Cognito/verifier collaborators as an
+            # injectable second argument, so no AWS account is needed
 npm run lint
 ```
 

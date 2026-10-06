@@ -13,18 +13,20 @@ Description: >-
 #        the two logical ids   MyThingLogGroup / MyThingFunction
 #        LogGroupName suffix   -my-thing
 #        FunctionName suffix   -my-thing
-#        Handler               auth/handlers/my-thing.handler
+#        Handler               handlers/my-thing.handler
 #        Path                  /auth/my-thing
 #   3. Protected route? add the Auth block (see ChangePasswordFunction).
-#   4. From backend-code/ (where package.json is):
-#        sam build -t auth/template.yaml --cached --parallel && sam deploy
+#   4. From this folder (where package.json and samconfig.toml are):
+#        npm run deploy:env
 #
 # Everything shared — runtime, memory, timeout, env vars — is in Globals, so
 # a new endpoint is ~18 lines and repeats nothing.
 #
-# Handler paths carry the "auth/" prefix because CodeUri is backend-code/ —
-# that is where package.json lives, and sam installs dependencies from the
-# package.json inside CodeUri.
+# CodeUri is this folder, so it is self-contained: package.json, samconfig.toml
+# and the handlers all live here, and sam installs dependencies from the
+# package.json beside this template. Handler paths are therefore handlers/*.
+# That is what lets the whole folder be dropped into any project and deployed
+# without touching anything outside it.
 #
 # The log group is separate from the function on purpose: it is the only way
 # to control retention. Without it Lambda creates the group itself on first
@@ -51,6 +53,10 @@ Metadata:
           - CognitoUserPoolArn
           - CognitoUserPoolClientId
           - CognitoClientSecret
+      - Label: { default: Password reset }
+        Parameters:
+          - ResetTokenSecret
+          - ResetTokenTtlSeconds
       - Label: { default: Observability & limits }
         Parameters:
           - CorsAllowOrigin
@@ -100,6 +106,25 @@ Parameters:
     NoEcho: true
     Description: App client secret, if the client has one. Empty for a public client.
 
+  # lib/resetToken.js HMACs the resetToken with this. It has no default on
+  # purpose: an empty secret would make crypto.createHmac throw at runtime, and
+  # a shared default would let anyone forge a token that resets any account.
+  ResetTokenSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: >-
+      Long random secret signing the forgot-password resetToken. Required —
+      generate with `openssl rand -base64 48`. Rotating it invalidates every
+      reset token currently in flight, which is harmless.
+
+  ResetTokenTtlSeconds:
+    Type: Number
+    Default: 600
+    MinValue: 60
+    MaxValue: 3600
+    Description: How long a resetToken stays valid between verify-reset-otp and reset-password.
+
   CorsAllowOrigin:
     Type: String
     Default: "*"
@@ -146,9 +171,9 @@ Globals:
   Function:
     Runtime: nodejs24.x
     Architectures: [arm64]
-    # backend-code/ — sam copies it and installs the production dependencies
-    # from backend-code/package.json. Handlers are therefore auth/handlers/*.
-    CodeUri: ../
+    # This folder — sam copies it and installs the production dependencies
+    # from the package.json beside this template. Handlers are handlers/*.
+    CodeUri: ./
     MemorySize: 256
     Timeout: 15
     Environment:
@@ -162,6 +187,9 @@ Globals:
         COGNITO_CLIENT_ID: !Ref CognitoUserPoolClientId
         COGNITO_CLIENT_SECRET: !Ref CognitoClientSecret
         CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
+        # Read by lib/resetToken.js (verify_reset_otp.js / reset_password.js).
+        RESET_TOKEN_SECRET: !Ref ResetTokenSecret
+        RESET_TOKEN_TTL_SECONDS: !Ref ResetTokenTtlSeconds
 
 Resources:
 
@@ -291,25 +319,13 @@ Resources:
                   - cognito-idp:SignUp                    # signup
                   - cognito-idp:ConfirmSignUp             # verify-otp
                   - cognito-idp:ResendConfirmationCode    # resend-otp
-                  - cognito-idp:AdminInitiateAuth         # signin, refresh
+                  - cognito-idp:AdminInitiateAuth         # signin, refresh, password re-check
                   - cognito-idp:AdminGetUser
                   - cognito-idp:AdminUserGlobalSignOut    # logout
-                Resource: !Ref CognitoUserPoolArn
-
-              # Needed by the routes still returning 501. Kept so implementing
-              # one is a code change, not an IAM debugging session; drop any
-              # line here if you decide that endpoint is not happening.
-              - Sid: CognitoUserPoolAccessPlanned
-                Effect: Allow
-                Action:
                   - cognito-idp:ForgotPassword            # forgot-password
-                  - cognito-idp:ConfirmForgotPassword     # reset-password
-                  - cognito-idp:AdminSetUserPassword      # reset-password
-                  - cognito-idp:ChangePassword            # change-password
-                  - cognito-idp:DeleteUser                # delete-account
+                  - cognito-idp:ConfirmForgotPassword     # verify-reset-otp
+                  - cognito-idp:AdminSetUserPassword      # reset-password, change-password
                   - cognito-idp:AdminDeleteUser           # delete-account
-                  - cognito-idp:GetUser
-                  - cognito-idp:RevokeToken
                 Resource: !Ref CognitoUserPoolArn
 
 
@@ -330,7 +346,7 @@ Resources:
       FunctionName: !Sub ${ProjectName}-${Environment}-signup
       Description: Register a new user in the Cognito user pool
       # The implemented handler is sign_up.js, not signup.js.
-      Handler: auth/handlers/sign_up.handler
+      Handler: handlers/sign_up.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -352,7 +368,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-signin
       Description: Authenticate a user and start the OTP challenge
-      Handler: auth/handlers/sign_in.handler
+      Handler: handlers/sign_in.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -374,7 +390,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-otp
       Description: Complete the OTP round and return tokens
-      Handler: auth/handlers/verify_otp.handler
+      Handler: handlers/verify_otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -396,7 +412,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-refresh
       Description: Exchange a refresh token for a new id token
-      Handler: auth/handlers/refresh_token.handler
+      Handler: handlers/refresh_token.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -417,8 +433,8 @@ Resources:
     DependsOn: TokensLogGroup
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-tokens
-      Description: Exchange an auth session for tokens — returns 501 for now
-      Handler: auth/handlers/tokens.handler
+      Description: Exchange an established session (Bearer idToken) for tokens
+      Handler: handlers/tokens.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -427,8 +443,12 @@ Resources:
             RestApiId: !Ref AuthApi
             Path: /auth/tokens
             Method: post
-
-  # --- below here the handlers are still 501 stubs -------------------------
+            # No longer a public route — it identifies the caller from the
+            # Bearer idToken, so it gets the same gateway authorizer as the
+            # other token-protected routes. The handler verifies the token
+            # again itself, the way logout does.
+            Auth:
+              Authorizer: CognitoAuthorizer
 
   ResendOtpLogGroup:
     Type: AWS::Logs::LogGroup
@@ -442,7 +462,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-resend-otp
       Description: Resend the confirmation code
-      Handler: auth/handlers/resend-otp.handler
+      Handler: handlers/resend-otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -464,7 +484,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-forgot-password
       Description: Start the forgot-password flow
-      Handler: auth/handlers/forgot-password.handler
+      Handler: handlers/forgot_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -486,7 +506,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-verify-reset-otp
       Description: Validate the password reset code
-      Handler: auth/handlers/verify-reset-otp.handler
+      Handler: handlers/verify_reset_otp.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -508,7 +528,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-reset-password
       Description: Complete the forgot-password flow with a new password
-      Handler: auth/handlers/reset-password.handler
+      Handler: handlers/reset_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -534,7 +554,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-logout
       Description: Globally sign the user out and revoke their tokens
-      Handler: auth/handlers/logout.handler
+      Handler: handlers/logout.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -552,13 +572,17 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-change-password
       RetentionInDays: !Ref LogRetentionInDays
 
+  # --- change-password and delete-account are the only routes left on a 501
+  # --- stub: these two Handler: lines point at the hyphenated files, while
+  # --- the working implementations sit in change_password.js /
+  # --- delete_account.js. Switch them over the way the reset trio was.
   ChangePasswordFunction:
     Type: AWS::Serverless::Function
     DependsOn: ChangePasswordLogGroup
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-change-password
       Description: Change the password of the signed-in user
-      Handler: auth/handlers/change-password.handler
+      Handler: handlers/change_password.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:
@@ -584,7 +608,7 @@ Resources:
     Properties:
       FunctionName: !Sub ${ProjectName}-${Environment}-delete-account
       Description: Delete the signed-in user from the user pool
-      Handler: auth/handlers/delete-account.handler
+      Handler: handlers/delete_account.handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Events:
         Post:

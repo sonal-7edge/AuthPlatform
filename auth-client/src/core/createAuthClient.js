@@ -41,8 +41,18 @@ export function createAuthClient(config = {}) {
 
   if (!baseURL) {
     throw new Error(
-      'createAuthClient requires a baseURL — e.g. createAuthClient({ baseURL: "https://api.example.com/api" }). ' +
-      'Without it every request would go to the current origin.'
+      'No API base URL. Set VITE_API_BASE_URL in .env and restart the dev server — ' +
+      'Vite only reads .env at startup. Or pass it directly: ' +
+      'createAuthClient({ baseURL: "https://api.example.com/v1" }).'
+    )
+  }
+
+  // The scaffolded .env ships a placeholder. Catch it here rather than letting
+  // every request quietly fail against a host that does not exist.
+  if (baseURL.includes('REPLACE-ME')) {
+    throw new Error(
+      'VITE_API_BASE_URL is still the placeholder. Set it to your authentication ' +
+      'API in .env and restart the dev server.'
     )
   }
 
@@ -91,6 +101,15 @@ export function createAuthClient(config = {}) {
   function subscribe(listener) {
     listeners.add(listener)
     return () => listeners.delete(listener)
+  }
+
+  /**
+   * Dismisses the error on state. Errors otherwise live until the next action
+   * starts, so a failure from one screen would still be showing after the user
+   * navigates away or starts correcting the field that caused it.
+   */
+  function clearError() {
+    setState({ error: null })
   }
 
   /** Re-reads storage into state — used after another tab changes the session. */
@@ -153,7 +172,7 @@ export function createAuthClient(config = {}) {
   })
 
   backend = createHttpBackend(
-    createHttpClient({ baseURL, headers, tokenStore, tokenManager, onForceLogout: forceLogout }),
+    createHttpClient({ baseURL, headers, tokenStore, tokenManager, endpoints }),
     { endpoints }
   )
 
@@ -181,12 +200,6 @@ export function createAuthClient(config = {}) {
     }
   })
 
-  /** Identifier of the signed-in user, passed to backend calls that need it. */
-  function currentContext() {
-    const user = tokenStore.getUser()
-    return { identifier: user?.email ?? user?.phone ?? null, user }
-  }
-
   function persistSession(data) {
     // The API returns the user alongside the bundle. Split them: the user
     // belongs under its own key, not inside the token blob where it would be
@@ -208,20 +221,29 @@ export function createAuthClient(config = {}) {
     return runAction(() => backend.signUp(payload))
   }
 
+  /**
+   * Signs in and persists the returned bundle. The API authenticates on
+   * credentials alone — there is no OTP step in this flow.
+   */
   function signIn(payload) {
-    return runAction(() => backend.signIn(payload))
-  }
-
-  /** Completes sign-in: verifies the OTP and persists the returned bundle. */
-  function verifyOtp(payload) {
     return runAction(async () => {
-      const result = await backend.verifyOtp(payload)
+      const result = await backend.signIn(payload)
       if (!result.error) {
         persistSession(result.data)
         broadcaster.post(BROADCAST_EVENTS.LOGIN)
       }
       return result
     })
+  }
+
+  /**
+   * Confirms a newly registered account with the code sent at sign-up.
+   *
+   * This does NOT authenticate: the API responds with a message only, and the
+   * user signs in afterwards. Password reset uses `verifyResetOtp` instead.
+   */
+  function verifyOtp(payload) {
+    return runAction(() => backend.verifyOtp(payload))
   }
 
   function resendOtp(payload) {
@@ -241,26 +263,18 @@ export function createAuthClient(config = {}) {
   }
 
   function changePassword(payload) {
-    return runAction(() => backend.changePassword(payload, currentContext()))
+    return runAction(() => backend.changePassword(payload))
   }
 
   function deleteAccount(payload) {
     return runAction(async () => {
-      const result = await backend.deleteAccount(payload, currentContext())
+      const result = await backend.deleteAccount(payload)
       // Only tear the session down if the deletion actually succeeded —
       // a wrong-password rejection must leave the user signed in.
       if (!result.error) {
         clearSession()
         broadcaster.post(BROADCAST_EVENTS.LOGOUT)
       }
-      return result
-    })
-  }
-
-  function fetchTokens() {
-    return runAction(async () => {
-      const result = await backend.fetchTokens({}, currentContext())
-      if (!result.error) persistSession(result.data)
       return result
     })
   }
@@ -279,7 +293,9 @@ export function createAuthClient(config = {}) {
 
   function signOut() {
     return runAction(async () => {
-      const result = await backend.signOut({ refreshToken: tokenStore.getRefreshToken() })
+      // Bearer-authenticated with an empty body; the server revokes every
+      // refresh token for the user.
+      const result = await backend.signOut({})
       // Clear locally regardless: a failed server-side revoke must not strand
       // the user in a half-signed-in state.
       clearSession()
@@ -313,6 +329,7 @@ export function createAuthClient(config = {}) {
     // state
     getState,
     subscribe,
+    clearError,
     // session
     signUp,
     signIn,
@@ -327,7 +344,6 @@ export function createAuthClient(config = {}) {
     signOut,
     logout: signOut,
     // tokens
-    fetchTokens,
     refreshToken,
     getTokens: () => tokenStore.getTokens(),
     getIdToken: () => tokenStore.getIdToken(),

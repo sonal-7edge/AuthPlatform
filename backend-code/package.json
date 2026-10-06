@@ -2,13 +2,14 @@
   "name": "backend-code",
   "version": "1.0.0",
   "private": true,
-  "description": "Backend service — Lambda handlers and the SAM template that deploys them",
+  "description": "Backend service \u2014 Lambda handlers and the SAM template that deploys them",
   "scripts": {
     "lint": "eslint .",
     "test": "jest --coverage",
     "validate": "sam validate -t auth/template.yaml --lint",
     "build": "sam build -t auth/template.yaml --cached --parallel",
     "deploy": "npm run validate && npm run build && if [ -f samconfig.toml ]; then sam deploy --capabilities CAPABILITY_NAMED_IAM; else sam deploy --guided --capabilities CAPABILITY_NAMED_IAM; fi",
+    "deploy:env": "npm run validate && npm run build && . ./.env && sam deploy --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ProjectName=\"$ProjectName\" Environment=\"$Environment\" ApiStageName=\"$ApiStageName\" CognitoUserPoolId=\"$CognitoUserPoolId\" CognitoUserPoolArn=\"$CognitoUserPoolArn\" CognitoUserPoolClientId=\"$CognitoUserPoolClientId\" CognitoClientSecret=\"$CognitoClientSecret\" ResetTokenSecret=\"$RESET_TOKEN_SECRET\" CorsAllowOrigin=\"$CorsAllowOrigin\" LogRetentionInDays=\"$LogRetentionInDays\" LogLevel=\"$LogLevel\" ThrottlingRateLimit=\"$ThrottlingRateLimit\" ThrottlingBurstLimit=\"$ThrottlingBurstLimit\" ManageApiGatewayAccount=\"$ManageApiGatewayAccount\"",
     "deploy:guided": "npm run validate && npm run build && sam deploy --guided --capabilities CAPABILITY_NAMED_IAM",
     "destroy": "sam delete"
   },

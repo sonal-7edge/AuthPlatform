@@ -6,6 +6,7 @@
 export const DEFAULT_STORAGE_KEYS = {
   TOKENS: 'auth_tokens',
   USER: 'auth_user',
+  USERNAME: 'auth_username',
 }
 
 /**
@@ -23,7 +24,6 @@ export const AUTH_ENDPOINTS = {
   RESET_PASSWORD: '/auth/reset-password',
   CHANGE_PASSWORD: '/auth/change-password',
   DELETE_ACCOUNT: '/auth/delete-account',
-  TOKENS: '/auth/tokens',
   REFRESH: '/auth/refresh',
   LOGOUT: '/auth/logout',
 }

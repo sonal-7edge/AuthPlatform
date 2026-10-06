@@ -28,17 +28,39 @@ const OUT = outFlag !== -1 ? process.argv[outFlag + 1] : '/home/user/auth-client
 const pkg = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8'))
 
 // --- 1. the build must be present ------------------------------------------
-for (const required of ['dist/index.js', 'dist/style.css', 'dist/templates/config.js']) {
+// Checked against the generated layout, not a remembered one: a renamed or
+// relocated template must fail here rather than ship the previous build.
+for (const required of [
+  'dist/index.js',
+  'dist/index.cjs',
+  'dist/style.css',
+  'dist/config.js',
+  'dist/bin/postinstall.mjs',
+  'dist/bin/auth-client.mjs',
+  'dist/templates/env',
+  'dist/templates/app/App.jsx',
+  'dist/templates/app/main.jsx',
+  'dist/templates/auth/index.js',
+  'dist/templates/auth/AuthFlow.jsx',
+  'dist/templates/auth/constants.js',
+  'dist/templates/auth/validation.js',
+  'dist/templates/auth/home.css',
+  'dist/templates/auth/screens/SignIn.jsx',
+  'dist/templates/auth/components/Button.jsx',
+]) {
   if (!existsSync(join(PKG_DIR, required))) {
     console.error(`Missing ${required}. Run \`npm run build\` first.`)
     process.exit(1)
   }
 }
 
-// --- 2. wipe everything except .git so removals propagate ------------------
+// --- 2. wipe only what this script owns ------------------------------------
+// Scoped deliberately: wiping the whole directory would delete unrelated
+// files someone keeps there (.git, .gitignore, other tools' output).
+// `dist/` goes wholesale so deletions inside it propagate.
 mkdirSync(OUT, { recursive: true })
-for (const entry of readdirSync(OUT)) {
-  if (entry !== '.git') rmSync(join(OUT, entry), { recursive: true, force: true })
+for (const owned of ['dist', 'package.json', 'README.md']) {
+  rmSync(join(OUT, owned), { recursive: true, force: true })
 }
 
 // --- 3. copy the artifact --------------------------------------------------
@@ -71,12 +93,9 @@ const distPkg = {
 }
 writeFileSync(join(OUT, 'package.json'), JSON.stringify(distPkg, null, 2) + '\n')
 
-// dist/ is build output here, but it is the whole point of the published repo.
-writeFileSync(join(OUT, '.gitignore'), 'node_modules\n')
-
 // --- 5. report -------------------------------------------------------------
 const count = (dir) =>
-  readdirSync(dir, { recursive: true }).filter((f) => !String(f).startsWith('.git')).length
+  readdirSync(join(dir, 'dist'), { recursive: true }).length + 2 // + package.json, README
 
 const isRepo = existsSync(join(OUT, '.git'))
 console.log(`

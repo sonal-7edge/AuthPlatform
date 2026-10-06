@@ -1,0 +1,49 @@
+{
+  "name": "@gprasad/auth-backend",
+  "version": "1.1.0",
+  "description": "Plug-and-play Cognito-backed auth service — installs a self-contained, deployable auth/ folder into your project",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "auth-backend": "scripts/install.js"
+  },
+  "files": [
+    "handlers",
+    "lib",
+    "utils",
+    "docs",
+    "templates",
+    "scripts",
+    "template.yaml",
+    ".env.example",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install.js --postinstall"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.900.0",
+    "aws-jwt-verify": "^5.1.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sonal-7edge/AuthPlatform.git",
+    "directory": "backend-code/auth"
+  },
+  "homepage": "https://github.com/sonal-7edge/AuthPlatform/tree/main/backend-code/auth#readme",
+  "bugs": {
+    "url": "https://github.com/sonal-7edge/AuthPlatform/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "aws",
+    "cognito",
+    "auth",
+    "lambda",
+    "serverless"
+  ]
+}
