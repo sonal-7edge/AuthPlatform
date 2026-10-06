@@ -4,6 +4,9 @@ For a developer adding `@7edge/auth-client` to an application. Read this
 start to finish once; after that, use the table of contents.
 
 For how the library works internally, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+If you do not have an auth API yet, start with
+[GETTING-STARTED.md](../../docs/GETTING-STARTED.md), which provisions Cognito
+and deploys the backend first.
 
 - [What this library does](#what-this-library-does)
 - [Before you start](#before-you-start)
@@ -33,8 +36,8 @@ For how the library works internally, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 It owns the *client half* of authentication:
 
-- Runs the OTP-gated sign-in, sign-up, password reset and account-deletion
-  journeys against your API.
+- Runs the sign-up (with account confirmation), sign-in, password reset and
+  account-deletion journeys against your API.
 - Persists the token bundle and keeps it fresh — proactive refresh before
   expiry, a single-flight lock so concurrent requests share one refresh, and a
   401-retry safety net.
@@ -45,6 +48,28 @@ It owns the *client half* of authentication:
 It does **not** issue or validate tokens, and it has no offline or mock mode.
 A reachable API implementing the [backend contract](#backend-contract) is
 required — there is nothing to demo against without one.
+
+### Why it exists
+
+The seven screens are the visible part, and the easy part. The reason to use
+this rather than write your own is the token plumbing underneath, which is
+where hand-rolled auth usually goes wrong:
+
+| Problem | What happens without it | What the library does |
+|---|---|---|
+| A token expires mid-session | A request 401s and the user is bounced to login | Refreshes ~30s *before* expiry, so requests go out valid |
+| Ten requests fire at once on an expired token | Ten parallel refreshes; nine present an already-rotated token, fail, and force a logout on a healthy session | A single-flight lock — all ten wait on one refresh |
+| A token is revoked server-side | The request fails and stays failed | One refresh-and-replay, capped so it can't loop |
+| The user signs out in another tab | The other tabs still think they are signed in | A cross-tab channel; every tab clears together |
+| The page is reloaded | A flash of the login screen before state rehydrates | State is read from storage synchronously on the first render |
+
+Each is a few lines to get roughly right and a long afternoon to get right under
+concurrency. Solving them once, in a package with tests against a real HTTP
+server, is the point.
+
+The screens are scaffolded into your project as files you own, so adopting this
+does not mean accepting its design decisions — delete them and keep the engine
+if you only want the token handling ([Path B](#path-b--your-own-screens-our-hook)).
 
 ---
 
@@ -65,20 +90,40 @@ never a second one, or hooks break.
 ## 1. Install
 
 ```bash
-npm install @7edge/auth-client
+npm install github:Nishan666/auth-client
 ```
 
-Installing runs a `postinstall` hook that scaffolds `src/auth/` and `.env` into
-your project. It never overwrites an existing file, so reinstalling and
-upgrading are both safe.
+The package is installed from GitHub — it is not published to npm, so
+`npm install @7edge/auth-client` fails with a 404. `@7edge/auth-client` is the
+name you *import* by; the git URL is how you install it.
 
-If your environment blocks install scripts (`--ignore-scripts`, or npm's
-allow-scripts prompt), nothing is scaffolded. Do it manually:
+Installing scaffolds `src/auth/` and deliberately touches nothing else — not
+`.env`, not `main.jsx`, not `App.jsx`. It also drops
+`src/auth/NEXT-STEPS.txt` listing what is left; delete it once you are done.
+
+Finish the wiring with:
 
 ```bash
-npx auth-client init                 # scaffold src/auth/ and .env
-npx auth-client init --dir src/login # somewhere else
-npx auth-client init --force         # overwrite (e.g. after an upgrade)
+npx auth-client setup
+```
+
+`setup` asks before each step that modifies a file, and prints the manual
+equivalent if you decline:
+
+| Prompt | What it does |
+|---|---|
+| *Create / append `.env`* | adds `VITE_API_BASE_URL`; appends to an existing file, never replaces it |
+| *Wire them up now?* | rewrites `src/main.jsx` and `src/App.jsx`, saving `.bak` copies of both first |
+
+The other commands:
+
+```bash
+npx auth-client status            # what is done, what is left
+npx auth-client undo              # restore main.jsx and App.jsx from .bak
+npx auth-client init              # scaffold src/auth/ only
+npx auth-client env               # the .env step only
+npx auth-client wire              # the main.jsx/App.jsx step only
+npx auth-client init --force      # overwrite the scaffold (e.g. after an upgrade)
 ```
 
 `--force` overwrites your edited screens. Commit first.
@@ -89,53 +134,69 @@ npx auth-client init --force         # overwrite (e.g. after an upgrade)
 
 ```
 src/auth/
-  config.js            baseURL, client options, the shared client instance
-  index.js             the barrel — import auth from here and nowhere else
-  AuthFlow.jsx         the pre-auth screen router
-  screens/
-    SignIn.jsx  SignUp.jsx  OtpVerify.jsx
-    ForgotPassword.jsx  ResetPassword.jsx
-    ChangePassword.jsx  DeleteAccount.jsx
-.env                   VITE_API_BASE_URL (created, or appended to)
+  index.js           the barrel — import auth from here and nowhere else
+  AuthFlow.jsx       the pre-auth screen router
+  screens/           SignIn, SignUp, OtpVerify, ForgotPassword,
+                     ResetPassword, ChangePassword, DeleteAccount
+  components/        AuthCard, Button, FormField, PasswordField,
+                     IdentifierInput, Alert, LoadingSpinner
+  validation.js      the field rules
+  constants.js       screen names, identifier types, OTP settings
+  home.css           styling for the generated home page
 ```
 
-**These files are yours.** Rewrite the copy, restyle them, swap in your own
-design system, delete the ones you don't need. A package upgrade will not
-touch them, and you never need to fork the library to change how auth looks.
+**All of it is yours.** Rewrite the copy, restyle it, swap in your own design
+system, delete what you don't need. A package upgrade will not touch it, and
+you never need to fork the library to change how auth looks. The only thing a
+generated file imports from the package is the auth engine itself.
 
-The screens are *generated* from the library's own screens at build time, so
-the copy you get can't have silently drifted from the library it talks to.
+The screens and primitives are *generated* from `src/ui/` at build time, so the
+copy you get can't have silently drifted from the library it talks to.
 
-Import from the barrel — `./auth` — rather than reaching into `config.js` or
-individual screens, so the wiring stays in one place:
+There is no local config file: `authConfig` is re-exported from the package and
+reads `VITE_API_BASE_URL` itself. Import from the barrel — `./auth` — rather
+than from the package directly, so the wiring stays in one place:
 
 ```js
-import { AuthProvider, useAuth, AuthFlow, authClient } from './auth'
+import { AuthProvider, useAuth, AuthFlow, authConfig } from './auth'
 ```
 
 ---
 
 ## 3. Point it at your API
 
-`.env`:
+`npx auth-client setup` writes a **placeholder**, not a working URL:
+
+```bash
+VITE_API_BASE_URL=https://REPLACE-ME.execute-api.ap-south-1.amazonaws.com/v1
+```
+
+Replace it with your API's base URL:
 
 ```bash
 VITE_API_BASE_URL=https://api.example.com/api
 ```
 
 Restart the dev server after changing it — Vite reads `.env` only at startup.
+Leaving the placeholder in produces a network error on the first request, not a
+build error, so it is easy to miss.
 
 The base URL is **required**. `createAuthClient` throws without one, rather
 than silently posting to your own origin.
 
-For a non-Vite bundler, edit `src/auth/config.js` — the variable name is the
-only thing that differs:
+`authConfig` reads `import.meta.env.VITE_API_BASE_URL`. On a non-Vite bundler
+that variable does not exist, so build the config yourself and pass it to the
+provider instead:
 
-| Framework | Read it as |
-|---|---|
-| Vite | `import.meta.env.VITE_API_BASE_URL` |
-| Create React App | `process.env.REACT_APP_API_BASE_URL` |
-| Next.js | `process.env.NEXT_PUBLIC_API_BASE_URL` |
+```js
+// src/auth/config.js — your file, create it
+export const authConfig = {
+  baseURL: process.env.REACT_APP_API_BASE_URL,  // Next.js: NEXT_PUBLIC_API_BASE_URL
+  expirySkewSeconds: 30,
+  crossTab: true,
+  onForceLogout: () => { window.location.href = '/login' },
+}
+```
 
 ---
 
@@ -183,9 +244,21 @@ export default function App() {
 }
 ```
 
-That is the whole integration. `AuthFlow` handles sign-in, sign-up, OTP and
-the password-reset journey; `isAuthenticated` flips the moment OTP
-verification succeeds, and your app renders.
+That is the whole integration. `AuthFlow` handles sign-in, sign-up, account
+confirmation and the password-reset journey; `isAuthenticated` flips the moment
+sign-in succeeds, and your app renders.
+
+`Shell` is a separate component on purpose: `useAuth()` cannot run inside `App`
+itself, because a component cannot consume a context that it renders the
+provider for. The generated `App.jsx` calls the same split `Root`.
+
+On a fresh Vite app, delete the starter stylesheets — the generated files import
+`@7edge/auth-client/style.css` and `src/auth/home.css` instead, leaving Vite's
+orphaned and liable to interfere:
+
+```bash
+rm -f src/App.css src/index.css
+```
 
 The stylesheet is scoped — it carries no global reset, so it will not restyle
 your pages. Skip it only if you are on [Path B](#path-b--your-own-screens-our-hook)
@@ -193,15 +266,20 @@ or [C](#path-c--headless-no-react) and render none of the built-in screens.
 
 ### Sharing one client with non-React code
 
-`config.js` already exports a client instance. Pass that instead of `config`
-when your API layer also needs it — then React and your fetch wrapper are
-looking at the same session:
+The package exposes a lazy singleton, `getAuthClient()`. Pass it instead of
+`config` when your API layer also needs the session — then React and your fetch
+wrapper are looking at the same client:
 
 ```jsx
-import { AuthProvider, authClient } from './auth'
+import { AuthProvider } from './auth'
+import { getAuthClient } from '@7edge/auth-client/config'
 
-<AuthProvider client={authClient}>…</AuthProvider>
+<AuthProvider client={getAuthClient()}>…</AuthProvider>
 ```
+
+`getAuthClient()` builds the client on first call from `authConfig` and returns
+that same instance forever after, so importing it from several modules is safe.
+Pass overrides on the first call only: `getAuthClient({ onForceLogout })`.
 
 Pass `client` **or** `config`, not both. Either is read once, on first render;
 changing it later has no effect, by design — the instance is stable for the
@@ -275,15 +353,15 @@ requires the built-in UI.
 import { useState } from 'react'
 import { useAuth } from './auth'
 
-function MySignIn({ onOtpRequired }) {
+function MySignIn() {
   const { signIn, isLoading, error } = useAuth()
   const [form, setForm] = useState({ email: '', password: '' })
 
   async function submit(event) {
     event.preventDefault()
-    const result = await signIn(form)
-    // Sign-in does not authenticate — it triggers an OTP challenge.
-    if (!result.error) onOtpRequired(form.email)
+    // Sign-in authenticates directly — the session is persisted for you and
+    // isAuthenticated flips. There is no OTP round here.
+    await signIn(form)
   }
 
   return (
@@ -342,8 +420,7 @@ auth.subscribe((state) => {
   console.log(state.isAuthenticated, state.user)
 })
 
-await auth.signIn({ email, password })
-await auth.verifyOtp({ identifier: email, otp })
+await auth.signIn({ email, password })   // authenticates
 const token = await auth.getValidToken()
 ```
 
@@ -371,13 +448,20 @@ when you want the session to die with the tab.
 
 Two things surprise people, so they are worth stating plainly.
 
-**Sign-in does not sign you in.** `signIn()` and `signUp()` both end with an
-OTP challenge. Only `verifyOtp()` returns tokens and flips
-`isAuthenticated`.
+**The OTP confirms a new account; it does not sign anyone in.** A code is sent
+once, at sign-up. `verifyOtp()` confirms the account and returns a message —
+no tokens. `signIn()` is what authenticates, and it does so on the first call:
 
 ```
-signIn / signUp  ──►  OTP sent  ──►  verifyOtp  ──►  authenticated
+signUp ──► code emailed ──► verifyOtp (account confirmed) ──┐
+                                                            ▼
+                                     signIn ──► tokens ──► authenticated
 ```
+
+Sign-in has no second factor. That is Cognito's design here: its built-in
+sender can only deliver messages Cognito composes itself, so an OTP on every
+sign-in would need a verified SES identity. If you want a second factor, use
+Cognito's own MFA rather than a hand-rolled challenge chain.
 
 **Password reset uses a different OTP purpose and a different verify call.**
 `verifyResetOtp()` returns a short-lived, single-use `resetToken` — it does
@@ -390,15 +474,14 @@ forgotPassword ──► OTP sent ──► verifyResetOtp ──► resetToken 
 Full sequence, hand-rolled:
 
 ```js
-// Sign up
+// Sign up — two steps, neither of which authenticates
 await auth.signUp({ firstName, lastName, email, password })
-await auth.verifyOtp({ identifier: email, otp })      // now authenticated
+await auth.verifyOtp({ identifier: email, otp })      // account confirmed
 
-// Sign in
-await auth.signIn({ email, password })
-await auth.verifyOtp({ identifier: email, otp })
+// Sign in — this is what authenticates
+await auth.signIn({ email, password })                // now authenticated
 
-// Didn't arrive
+// Code didn't arrive (only applies to an unconfirmed account)
 await auth.resendOtp({ identifier: email, purpose: 'auth' })
 
 // Reset
@@ -426,7 +509,9 @@ the token is expired or inside the skew window, so what you get is usable:
 ```js
 // src/api/client.js
 import axios from 'axios'
-import { authClient } from '../auth'
+import { getAuthClient } from '@7edge/auth-client/config'
+
+const authClient = getAuthClient()
 
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_BASE_URL })
 
@@ -628,10 +713,10 @@ Each resolves to `{ error: false, data }` or
 
 | Method | Payload | Notes |
 |---|---|---|
-| `signUp` | `{ firstName, lastName, email \| phone, password }` | Ends in an OTP challenge. Does not authenticate. |
-| `signIn` / `login` | `{ email \| phone, password }` | Ends in an OTP challenge. Does not authenticate. |
-| `verifyOtp` | `{ identifier, otp }` | **Authenticates.** Persists tokens, tells other tabs. |
-| `resendOtp` | `{ identifier, purpose }` | `purpose`: `'auth'` or `'password-reset'`. |
+| `signUp` | `{ firstName, lastName, email \| phone, password }` | Sends a confirmation code. Does not authenticate. |
+| `signIn` / `login` | `{ email \| phone, password }` | **Authenticates.** Persists the session, tells other tabs. |
+| `verifyOtp` | `{ identifier, otp }` | Confirms a new account. Returns a message, **no tokens**. |
+| `resendOtp` | `{ identifier, purpose }` | Resends the confirmation code; unconfirmed accounts only. |
 | `forgotPassword` | `{ identifier, email \| phone }` | Sends a reset code. |
 | `verifyResetOtp` | `{ identifier, otp }` | Returns `data.resetToken`. Does not authenticate. |
 | `resetPassword` | `{ identifier, resetToken, newPassword }` | The reset token is single-use. |
@@ -667,7 +752,7 @@ Also exported for direct use: `decodeJWT(token)`, `isExpired(token, skew)`,
 
 ```js
 import { decodeJWT } from './auth'
-const claims = decodeJWT(authClient.getIdToken())  // null if undecodable
+const claims = decodeJWT(getAuthClient().getIdToken())  // null if undecodable
 ```
 
 `decodeJWT` reads the payload only. **It does not verify the signature** —
@@ -682,9 +767,9 @@ Every route is a `POST` under `baseURL`, JSON in and out.
 
 | Route | Sends | Expects back |
 |---|---|---|
-| `/auth/signup` | profile + password | `{ message }` — and an OTP is dispatched |
-| `/auth/signin` | credentials | `{ message }` — and an OTP is dispatched |
-| `/auth/verify-otp` | `{ identifier, otp }` | the token bundle + `{ user }` |
+| `/auth/signup` | profile + password | `{ message }` — a confirmation code is dispatched |
+| `/auth/signin` | credentials | **the token bundle + `{ user }`** — this authenticates |
+| `/auth/verify-otp` | `{ identifier, otp }` | `{ message }` — confirms the account, no tokens |
 | `/auth/resend-otp` | `{ identifier, purpose }` | `{ message }` |
 | `/auth/forgot-password` | `{ identifier }` | `{ message }` |
 | `/auth/verify-reset-otp` | `{ identifier, otp }` | `{ resetToken, expiresIn }` |
@@ -735,8 +820,9 @@ must not be used as a starting point for a production service.
 
 **Vite + React** — the default path. Nothing extra.
 
-**Create React App / Webpack** — change the env variable name in
-`src/auth/config.js` to `process.env.REACT_APP_API_BASE_URL`.
+**Create React App / Webpack** — `authConfig` reads a Vite-only variable, so
+build your own config with `process.env.REACT_APP_API_BASE_URL` and pass it to
+the provider. See [step 3](#3-point-it-at-your-api).
 
 **Next.js** — the client touches `localStorage` and `BroadcastChannel`, so
 keep it on the client:
@@ -780,15 +866,21 @@ the provider, or a second copy of the library is loaded. Check
 missing at the app root. If you built a custom screen, its outermost element
 also needs `className="ac-root"`.
 
-**Nothing was scaffolded on install** — install scripts were blocked. Run
-`npx auth-client init`. Set `AUTH_CLIENT_DEBUG=1` to see why the hook skipped.
+**Nothing was scaffolded on install** — install scripts were blocked
+(`--ignore-scripts`, or npm's allow-scripts prompt). Run `npx auth-client init`,
+then `npx auth-client setup`. `npx auth-client status` shows what is still
+missing.
+
+**Stuck on the OTP screen after a correct sign-in** — you are on 0.2.0, which
+expected an OTP round on every sign-in. Upgrade to 0.2.1+, where `signIn()`
+authenticates directly. See [the user journeys](#the-user-journeys).
 
 **Signed in but requests still 401** — you are attaching `getIdToken()` instead
 of `await getValidToken()`, so an expired token goes out unrefreshed.
 
 **Logged out unexpectedly** — a refresh failed. Refresh tokens are single-use
 and rotate; two clients sharing one bundle will knock each other out. Check
-that only one client instance exists (import `authClient` from `./auth`, don't
+that only one client instance exists (use `getAuthClient()`, don't
 call `createAuthClient` twice).
 
 **Every request triggers a refresh** — the id token's `exp` is shorter than
