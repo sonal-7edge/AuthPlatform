@@ -26,7 +26,8 @@ What each folder in this repository is for, in plain words.
 | `tailwind.config.js` | Design tokens and the CSS build. |
 | `postcss.config.js` | Runs Tailwind and autoprefixer over the stylesheet. |
 | `eslint.config.js` | Code style rules. |
-| `README.md` | All the documentation — getting started, API, releasing. |
+| `README.md` | Quick start, API reference, releasing. |
+| `docs/` | The long-form guides: [INTEGRATION.md](./docs/INTEGRATION.md) for consumers, [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for maintainers. |
 | `.gitignore` | What git leaves out, including `dist/`. |
 
 ## The one rule worth remembering

@@ -29,6 +29,14 @@ The root entry pulls in React, so a Node script or non-React host should import
 
 ## Contents
 
+This file is the quick start and the reference. Two longer guides sit in
+[`docs/`](./docs):
+
+| Guide | For |
+|---|---|
+| [docs/INTEGRATION.md](./docs/INTEGRATION.md) | Integrating the library into an app — the three integration paths, the user journeys end to end, calling your own API with the session, route protection, theming, framework notes. |
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | Maintaining the library — key logic (the refresh lock, the interceptors, storage, cross-tab), the build and scaffolding pipelines, and how to change things safely. |
+
 - [Getting started](#getting-started) — empty folder to working auth flow
 - [What to test](#what-to-test)
 - [API reference](#api-reference) — client, React, screens, theming, tokens
