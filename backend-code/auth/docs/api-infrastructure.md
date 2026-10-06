@@ -99,7 +99,7 @@ CORS headers), and an `AWS::ApiGateway::Account` that only appears when
 `handlers/my-thing.js`:
 
 ```js
-const { withErrorHandling } = require('../lib/handlerWrapper')
+const { withErrorHandling } = require('../lib/handler_wrapper')
 const { ok, badRequest, parseBody } = require('../lib/helpers')
 
 module.exports.handler = withErrorHandling(async (event) => {
@@ -483,7 +483,7 @@ dependency either way; the runtime does not provide it.
 | `CognitoUserPoolId` | *required* | Reaches handlers as `COGNITO_USER_POOL_ID`. |
 | `CognitoUserPoolArn` | *required* | The API's Cognito authorizer, and the IAM resource scope. |
 | `CognitoUserPoolClientId` | *required* | Reaches handlers as `COGNITO_CLIENT_ID`. |
-| `CognitoClientSecret` | `''` | `NoEcho`. The literal secret — `lib/Cognito.js` computes `SECRET_HASH` from it, so an ARN would not do. Empty for a public app client. |
+| `CognitoClientSecret` | `''` | `NoEcho`. The literal secret — `lib/cognito.js` computes `SECRET_HASH` from it, so an ARN would not do. Empty for a public app client. |
 | `CorsAllowOrigin` | `*` | See §6. |
 | `LogRetentionInDays` | `30` | Every log group in the stack. |
 | `LogLevel` | `info` | `LOG_LEVEL` on every function. |
@@ -514,9 +514,9 @@ Set once in `Globals.Function.Environment.Variables`, so every function gets all
 
 | Variable | From parameter | Read by |
 |---|---|---|
-| `COGNITO_USER_POOL_ID` | `CognitoUserPoolId` | `lib/Cognito.js`, `lib/verifyIdToken.js` |
-| `COGNITO_CLIENT_ID` | `CognitoUserPoolClientId` | `lib/Cognito.js`, `lib/verifyIdToken.js` |
-| `COGNITO_CLIENT_SECRET` | `CognitoClientSecret` | `lib/Cognito.js` (`SECRET_HASH`) |
+| `COGNITO_USER_POOL_ID` | `CognitoUserPoolId` | `lib/cognito.js`, `lib/verify_id_token.js` |
+| `COGNITO_CLIENT_ID` | `CognitoUserPoolClientId` | `lib/cognito.js`, `lib/verify_id_token.js` |
+| `COGNITO_CLIENT_SECRET` | `CognitoClientSecret` | `lib/cognito.js` (`SECRET_HASH`) |
 | `CORS_ALLOW_ORIGIN` | `CorsAllowOrigin` | `utils/helpers.js` |
 | `LOG_LEVEL`, `PROJECT_NAME`, `ENVIRONMENT` | matching parameters | — |
 | `NODE_OPTIONS` | literal `--enable-source-maps` | — |

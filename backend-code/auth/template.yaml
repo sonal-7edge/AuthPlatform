@@ -98,7 +98,7 @@ Parameters:
     Type: String
     Description: App client id. Reaches the handlers as COGNITO_CLIENT_ID.
 
-  # lib/Cognito.js computes SECRET_HASH from the literal secret, so the value
+  # lib/cognito.js computes SECRET_HASH from the literal secret, so the value
   # itself has to reach the runtime — an ARN would not be enough.
   CognitoClientSecret:
     Type: String
@@ -106,7 +106,7 @@ Parameters:
     NoEcho: true
     Description: App client secret, if the client has one. Empty for a public client.
 
-  # lib/resetToken.js HMACs the resetToken with this. It has no default on
+  # lib/reset_token.js HMACs the resetToken with this. It has no default on
   # purpose: an empty secret would make crypto.createHmac throw at runtime, and
   # a shared default would let anyone forge a token that resets any account.
   ResetTokenSecret:
@@ -182,12 +182,12 @@ Globals:
         PROJECT_NAME: !Ref ProjectName
         ENVIRONMENT: !Ref Environment
         LOG_LEVEL: !Ref LogLevel
-        # These names are what lib/Cognito.js and lib/verifyIdToken.js read.
+        # These names are what lib/cognito.js and lib/verify_id_token.js read.
         COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
         COGNITO_CLIENT_ID: !Ref CognitoUserPoolClientId
         COGNITO_CLIENT_SECRET: !Ref CognitoClientSecret
         CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
-        # Read by lib/resetToken.js (verify_reset_otp.js / reset_password.js).
+        # Read by lib/reset_token.js (verify_reset_otp.js / reset_password.js).
         RESET_TOKEN_SECRET: !Ref ResetTokenSecret
         RESET_TOKEN_TTL_SECONDS: !Ref ResetTokenTtlSeconds
 

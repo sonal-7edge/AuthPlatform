@@ -1,5 +1,5 @@
-const Cognito = require('../lib/Cognito')
-const { withErrorHandling } = require('../lib/handlerWrapper')
+const Cognito = require('../lib/cognito')
+const { withErrorHandling } = require('../lib/handler_wrapper')
 const { ok, badRequest, parseBody, resolveIdentifier, usernameFor } = require('../lib/helpers')
 
 function buildUserAttributes({ first_name, last_name, identifier, identifier_type }) {
